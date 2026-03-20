@@ -1,0 +1,107 @@
+<div id="mcp-add-form"
+     class="rounded-xl border border-blue-700/40 p-5 space-y-4"
+     style="background-color: #202123;">
+
+  <div class="flex items-center justify-between">
+    <h2 class="text-sm font-semibold text-white">{% if server %}Edit MCP Server{% else %}Add MCP Server{% endif %}</h2>
+    <button type="button"
+      onclick="document.getElementById('add-form-slot').innerHTML = ''"
+      class="text-xs text-gray-500 hover:text-gray-300 transition-colors">✕ Cancel</button>
+  </div>
+
+  <form
+    hx-post="{% if server %}{% url 'agent:mcp-detail' pk=server.id %}{% else %}{% url 'agent:mcp-add' %}{% endif %}"
+    hx-target="#mcp-server-list"
+    hx-swap="outerHTML"
+    class="space-y-4">
+    {% csrf_token %}
+
+    {# Name #}
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Name <span class="text-red-400">*</span></label>
+      <input type="text" name="name" required
+             value="{{ server.name|default:'' }}"
+             placeholder="e.g. filesystem"
+             class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm focus:outline-none focus:border-blue-500/60">
+      <p class="text-xs text-gray-600 mt-1">Unique identifier used to namespace tool names (<code>name__tool</code>).</p>
+    </div>
+
+    {# Transport #}
+    <div x-data="{ transport: '{{ server.transport|default:'stdio' }}' }">
+      <label class="block text-xs text-gray-400 mb-1">Transport <span class="text-red-400">*</span></label>
+      <select name="transport" x-model="transport"
+              class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm focus:outline-none">
+        <option value="stdio">stdio (local process)</option>
+        <option value="sse">SSE (remote HTTP)</option>
+      </select>
+
+      {# stdio fields #}
+      <div x-show="transport === 'stdio'" class="mt-3 space-y-3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Command <span class="text-red-400">*</span></label>
+          <input type="text" name="command"
+                 value="{{ server.command|default:'' }}"
+                 placeholder="e.g. npx @modelcontextprotocol/server-filesystem /path"
+                 class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm font-mono focus:outline-none focus:border-blue-500/60">
+          <p class="text-xs text-gray-600 mt-1">Full shell command. Arguments included.</p>
+        </div>
+      </div>
+
+      {# SSE fields #}
+      <div x-show="transport === 'sse'" class="mt-3 space-y-3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">URL <span class="text-red-400">*</span></label>
+          <input type="url" name="url"
+                 value="{{ server.url|default:'' }}"
+                 placeholder="https://example.com/mcp/sse"
+                 class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm font-mono focus:outline-none focus:border-blue-500/60">
+        </div>
+      </div>
+    </div>
+
+    {# Env vars #}
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Environment variables (JSON)</label>
+      <textarea name="env_json" rows="3"
+                placeholder='{"API_KEY": "secret", "HOME": "/tmp"}'
+                class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm font-mono focus:outline-none focus:border-blue-500/60">{% if server and server.env %}{{ server.env_json }}{% endif %}</textarea>
+      <p class="text-xs text-gray-600 mt-1">Stored encrypted. Merged with process environment at runtime.</p>
+    </div>
+
+    {# Auto-approve tools #}
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Auto-approve tools</label>
+      <input type="text" name="auto_approve_tools"
+             value="{% if server %}{{ server.auto_approve_tools|join:', ' }}{% endif %}"
+             placeholder="read_file, list_directory"
+             class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm font-mono focus:outline-none focus:border-blue-500/60">
+      <p class="text-xs text-gray-600 mt-1">Comma-separated tool names that run without user approval.</p>
+    </div>
+
+    {# Always-include resources #}
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Always-include resources</label>
+      <input type="text" name="always_include_resources"
+             value="{% if server %}{{ server.always_include_resources|join:', ' }}{% endif %}"
+             placeholder="file:///path/to/context.md"
+             class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm font-mono focus:outline-none focus:border-blue-500/60">
+      <p class="text-xs text-gray-600 mt-1">Comma-separated resource URIs injected into every system prompt.</p>
+    </div>
+
+    {# Enabled #}
+    <div class="flex items-center gap-2">
+      <input type="checkbox" name="enabled" id="mcp-enabled"
+             {% if not server or server.enabled %}checked{% endif %}
+             class="w-4 h-4 rounded border-white/20 bg-black/20">
+      <label for="mcp-enabled" class="text-sm text-gray-300">Enabled</label>
+    </div>
+
+    <div class="flex justify-end gap-2 pt-1">
+      <button type="submit"
+              class="text-xs px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+        {% if server %}Save changes{% else %}Add server{% endif %}
+      </button>
+    </div>
+  </form>
+
+</div>

@@ -52,4 +52,12 @@ urlpatterns = [
     # Workspace
     path("workspace/", views.WorkspaceFileListView.as_view(), name="workspace"),
     path("workspace/<str:filename>/", views.WorkspaceFileEditView.as_view(), name="workspace-file"),
+
+    # MCP Servers
+    path("mcp/", views.MCPServerListView.as_view(), name="mcp-list"),
+    path("mcp/add/", views.MCPServerAddView.as_view(), name="mcp-add"),
+    path("mcp/<uuid:pk>/", views.MCPServerDetailView.as_view(), name="mcp-detail"),
+    path("mcp/<uuid:pk>/toggle/", views.MCPServerToggleView.as_view(), name="mcp-toggle"),
+    path("mcp/<uuid:pk>/refresh/", views.MCPServerRefreshView.as_view(), name="mcp-refresh"),
+    path("mcp/<uuid:pk>/delete/", views.MCPServerDeleteView.as_view(), name="mcp-delete"),
 ]

@@ -124,6 +124,15 @@ AGENT_BROWSER_TIMEOUT_SECONDS = config(
 )
 MAX_TOOL_OUTPUT_CHARS = config("MAX_TOOL_OUTPUT_CHARS", default=4000, cast=int)
 
+# MCP — Fernet encryption keys for MCPServer.env field
+# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+FERNET_KEYS = [
+    k for k in [
+        config("FERNET_KEY", default=""),
+        config("FERNET_KEY_PREVIOUS", default=""),
+    ] if k
+]
+
 # LangSmith tracing (optional)
 LANGSMITH_API_KEY = config("LANGSMITH_API_KEY", default="")
 LANGSMITH_PROJECT = config("LANGSMITH_PROJECT", default="agent")

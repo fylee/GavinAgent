@@ -27,3 +27,10 @@ class AgentConfig(AppConfig):
             loader.load_all(registry)
         except Exception:
             pass
+
+        # Start MCP connection pool (connects all enabled MCP servers)
+        try:
+            from agent.mcp.pool import MCPConnectionPool
+            MCPConnectionPool.get().start_all()
+        except Exception:
+            pass

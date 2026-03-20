@@ -38,7 +38,7 @@ def _truncate_history(history: list[dict], budget_tokens: int, model: str) -> li
 
 
 def _build_system_context(query: str) -> str:
-    """Assemble system prompt from workspace files and relevant memories."""
+    """Assemble system prompt from workspace files, memories, and MCP resources."""
     agents_md = _read_workspace_file("AGENTS.md")
     soul_md = _read_workspace_file("SOUL.md")
     parts = []
@@ -52,6 +52,14 @@ def _build_system_context(query: str) -> str:
         excerpts = search_long_term(query, limit=5)
         if excerpts:
             parts.append("## Relevant memories\n\n" + "\n\n".join(excerpts))
+    except Exception:
+        pass
+
+    try:
+        from agent.mcp.pool import MCPConnectionPool
+        resources = MCPConnectionPool.get().fetch_always_include_resources()
+        if resources:
+            parts.append("## MCP Resources\n\n" + "\n\n".join(resources))
     except Exception:
         pass
 
@@ -119,9 +127,14 @@ def call_llm(state: AgentState) -> dict:
                     "content": json.dumps(tr["result"]),
                 })
 
-    # Build tool schemas
+    # Build tool schemas — built-ins + skills + MCP
     tools_schema = [t.to_llm_schema() for t in all_tools().values()]
     tools_schema.extend(skill_registry.to_llm_tools())
+    try:
+        from agent.mcp.registry import get_registry as get_mcp_registry
+        tools_schema.extend(get_mcp_registry().to_llm_schemas())
+    except Exception:
+        pass
 
     # Fetch run object for LLMUsage tracking
     _run_obj = None
@@ -194,7 +207,21 @@ def check_approval(state: AgentState) -> dict:
     for tc in pending:
         tool_name = tc["name"]
         tool = get_tool(tool_name)
-        requires = tool is None or tool.approval_policy == ApprovalPolicy.REQUIRES_APPROVAL
+        if tool is not None:
+            requires = tool.approval_policy == ApprovalPolicy.REQUIRES_APPROVAL
+        else:
+            # Check MCP registry
+            try:
+                from agent.mcp.registry import get_registry as get_mcp_registry
+                from agent.models import MCPServer
+                mcp_entry = get_mcp_registry().get(tool_name)
+                if mcp_entry:
+                    server = MCPServer.objects.filter(name=mcp_entry.server_name).first()
+                    requires = server is None or mcp_entry.tool_name not in (server.auto_approve_tools or [])
+                else:
+                    requires = True  # unknown tool → always require approval
+            except Exception:
+                requires = True
         if requires:
             te = ToolExecution.objects.create(
                 run=run,
@@ -257,13 +284,8 @@ def execute_tools(state: AgentState) -> dict:
                 pass
 
         tool = get_tool(tool_name)
-        if tool is None:
-            result = {"error": f"Unknown tool: {tool_name}"}
-            if te:
-                te.status = ToolExecution.Status.ERROR
-                te.output = result
-                te.save(update_fields=["status", "output"])
-        else:
+        if tool is not None:
+            # Built-in tool
             if te:
                 te.status = ToolExecution.Status.RUNNING
                 te.save(update_fields=["status"])
@@ -281,6 +303,48 @@ def execute_tools(state: AgentState) -> dict:
                     te.save(update_fields=["status", "output", "duration_ms"])
             except ToolTimeoutError as exc:
                 result = {"error": str(exc)}
+                if te:
+                    te.status = ToolExecution.Status.ERROR
+                    te.output = result
+                    te.save(update_fields=["status", "output"])
+        else:
+            # Try MCP registry
+            try:
+                from agent.mcp.registry import get_registry as get_mcp_registry
+                from agent.mcp.pool import MCPConnectionPool
+                from agent.mcp.client import MCPTimeoutError as MCPTimeout
+                import time as _time
+                mcp_entry = get_mcp_registry().get(tool_name)
+                if mcp_entry:
+                    if te:
+                        te.status = ToolExecution.Status.RUNNING
+                        te.save(update_fields=["status"])
+                    start = _time.monotonic()
+                    try:
+                        mcp_result = MCPConnectionPool.get().call_tool(
+                            mcp_entry.server_name, mcp_entry.tool_name, args
+                        )
+                        result = {"output": mcp_result}
+                        duration = int((_time.monotonic() - start) * 1000)
+                        if te:
+                            te.status = ToolExecution.Status.SUCCESS
+                            te.output = result
+                            te.duration_ms = duration
+                            te.save(update_fields=["status", "output", "duration_ms"])
+                    except MCPTimeout as exc:
+                        result = {"error": str(exc)}
+                        if te:
+                            te.status = ToolExecution.Status.ERROR
+                            te.output = result
+                            te.save(update_fields=["status", "output"])
+                else:
+                    result = {"error": f"Unknown tool: {tool_name}"}
+                    if te:
+                        te.status = ToolExecution.Status.ERROR
+                        te.output = result
+                        te.save(update_fields=["status", "output"])
+            except Exception as exc:
+                result = {"error": f"Tool execution error: {exc}"}
                 if te:
                     te.status = ToolExecution.Status.ERROR
                     te.output = result

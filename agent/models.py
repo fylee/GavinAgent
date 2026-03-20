@@ -1,7 +1,46 @@
 from uuid import uuid4
+import json
 from django.db import models
 from pgvector.django import VectorField, HnswIndex
 from core.models import TimeStampedModel
+
+
+class EncryptedJSONField(models.TextField):
+    """
+    Stores a JSON-serialisable dict as a Fernet-encrypted string.
+    Requires settings.FERNET_KEYS = [current_key, ...optional_old_keys].
+    """
+
+    def _get_fernet(self):
+        from cryptography.fernet import Fernet, MultiFernet
+        from django.conf import settings
+        keys = [k.encode() for k in getattr(settings, "FERNET_KEYS", []) if k]
+        if not keys:
+            raise ValueError("FERNET_KEYS must be set in settings to use EncryptedJSONField")
+        return MultiFernet([Fernet(k) for k in keys])
+
+    def from_db_value(self, value, expression, connection):
+        if not value:
+            return {}
+        try:
+            return json.loads(self._get_fernet().decrypt(value.encode()).decode())
+        except Exception:
+            return {}
+
+    def to_python(self, value):
+        if isinstance(value, dict):
+            return value
+        if not value:
+            return {}
+        try:
+            return json.loads(value)
+        except Exception:
+            return {}
+
+    def get_prep_value(self, value):
+        if not value:
+            value = {}
+        return self._get_fernet().encrypt(json.dumps(value).encode()).decode()
 
 
 class Agent(TimeStampedModel):
@@ -179,6 +218,78 @@ class ReembedLog(TimeStampedModel):
 
     def __str__(self):
         return f"ReembedLog {self.created_at} ({self.paragraph_count} paragraphs)"
+
+
+class MCPServer(TimeStampedModel):
+    """Configuration for a Model Context Protocol server (local stdio or remote SSE)."""
+
+    class Transport(models.TextChoices):
+        STDIO = "stdio", "stdio (local process)"
+        SSE = "sse", "SSE (remote HTTP)"
+
+    class ConnectionStatus(models.TextChoices):
+        UNKNOWN = "unknown", "Unknown"
+        CONNECTED = "connected", "Connected"
+        DISCONNECTED = "disconnected", "Disconnected"
+        ERROR = "error", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid4)
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True)
+    transport = models.CharField(max_length=10, choices=Transport.choices)
+
+    # stdio: shell command to launch the server process
+    # e.g. "npx -y @modelcontextprotocol/server-filesystem /workspace"
+    command = models.CharField(max_length=500, blank=True)
+
+    # sse: remote endpoint URL
+    url = models.CharField(max_length=500, blank=True)
+
+    # Encrypted at rest. For stdio: injected as env vars. For SSE: sent as HTTP headers.
+    env = EncryptedJSONField(default=dict, blank=True)
+
+    # Tool names that may execute without user approval
+    auto_approve_tools = models.JSONField(default=list)
+
+    # If True, all read_resource calls for this server are auto-approved
+    auto_approve_resources = models.BooleanField(default=False)
+
+    # Resource URIs to inject into every agent run's system context
+    always_include_resources = models.JSONField(default=list)
+
+    connection_status = models.CharField(
+        max_length=20,
+        choices=ConnectionStatus.choices,
+        default=ConnectionStatus.UNKNOWN,
+    )
+    last_connected_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    enabled = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+    def clean(self) -> None:
+        from django.core.exceptions import ValidationError
+        if self.transport == self.Transport.STDIO and not self.command.strip():
+            raise ValidationError({"command": "Required for stdio transport."})
+        if self.transport == self.Transport.SSE and not self.url.strip():
+            raise ValidationError({"url": "Required for SSE transport."})
+        if " " in self.name or not self.name.replace("-", "").replace("_", "").isalnum():
+            raise ValidationError({"name": "Name must be slug-like (letters, numbers, hyphens, underscores only)."})
+        if not isinstance(self.env, dict):
+            raise ValidationError({"env": "Must be a JSON object."})
+        for k, v in self.env.items():
+            if not isinstance(v, str):
+                raise ValidationError({"env": f"Value for '{k}' must be a string."})
+
+    @property
+    def env_json(self) -> str:
+        import json as _json
+        return _json.dumps(self.env, indent=2) if self.env else ""
 
 
 class Memory(TimeStampedModel):
