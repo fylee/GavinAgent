@@ -20,6 +20,8 @@
             hx-swap="outerHTML">
         {% csrf_token %}
         <input type="hidden" name="action" value="approve">
+        <input type="hidden" name="conversation_pk" value="{{ conversation.id }}">
+        <input type="hidden" name="user_msg_id" value="{{ user_msg_id }}">
         <button type="submit"
                 class="text-xs px-3 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 text-white font-medium transition-colors">
           Approve
@@ -32,6 +34,8 @@
             hx-swap="outerHTML">
         {% csrf_token %}
         <input type="hidden" name="action" value="reject">
+        <input type="hidden" name="conversation_pk" value="{{ conversation.id }}">
+        <input type="hidden" name="user_msg_id" value="{{ user_msg_id }}">
         <button type="submit"
                 class="text-xs px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-600 text-white font-medium transition-colors">
           Reject

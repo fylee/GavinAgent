@@ -554,6 +554,19 @@ class ToolApproveView(View):
         AgentRunner.enqueue(te.run)
 
         if request.htmx:
+            # If called from the chat UI, return a typing indicator so polling
+            # continues and picks up the next approval card or final reply.
+            user_msg_id = request.POST.get("user_msg_id")
+            conversation = te.run.conversation
+            if user_msg_id and conversation:
+                from django.template.loader import render_to_string
+                html = render_to_string(
+                    "chat/_typing_indicator.html",
+                    {"conversation": conversation, "user_msg_id": user_msg_id},
+                    request=request,
+                )
+                return HttpResponse(html)
+            # Fallback for Agent Run UI approvals
             label = "approved" if action == "approve" else "rejected"
             return HttpResponse(
                 f'<p class="text-green-400 text-sm px-4 py-2">'
