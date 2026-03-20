@@ -1,4 +1,4 @@
-# 004 — MCP Server Management
+# 006 — MCP Server Management
 
 **Status:** Draft
 **Created:** 2026-03-19
