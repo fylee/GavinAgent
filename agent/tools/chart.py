@@ -81,7 +81,9 @@ class ChartTool(BaseTool):
                 plt.rcParams["font.family"] = _cjk_font
             plt.rcParams["axes.unicode_minus"] = False
 
-            fig, ax = plt.subplots(figsize=(8, 5))
+            n_labels = len(labels)
+            fig_width = max(8, n_labels * 0.5)
+            fig, ax = plt.subplots(figsize=(fig_width, 5))
             fig.patch.set_facecolor("#1e1e2e")
             ax.set_facecolor("#1e1e2e")
             ax.tick_params(colors="#cccccc")
@@ -95,8 +97,12 @@ class ChartTool(BaseTool):
 
             if chart_type == "bar":
                 ax.bar(labels, values, color=color)
+                ax.set_xticks(range(len(labels)))
+                ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=max(7, 10 - n_labels // 5))
             elif chart_type == "line":
                 ax.plot(labels, values, color=color, marker="o")
+                ax.set_xticks(range(len(labels)))
+                ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=max(7, 10 - n_labels // 5))
             elif chart_type == "pie":
                 ax.pie(values, labels=labels, autopct="%1.1f%%",
                        textprops={"color": "#cccccc"})
