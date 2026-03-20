@@ -250,14 +250,19 @@ class MCPConnectionPool:
         self, server_name: str, status: str, error: str = ""
     ) -> None:
         try:
-            from django.utils import timezone
-            from agent.models import MCPServer
-
-            update: dict = {"connection_status": status, "last_error": error}
-            if status == "connected":
-                update["last_connected_at"] = timezone.now()
-            MCPServer.objects.filter(name=server_name).update(**update)
-            if status == "error":
-                MCPServer.objects.filter(name=server_name).update(enabled=False)
+            from asgiref.sync import sync_to_async
+            await sync_to_async(self._update_db_status_sync)(server_name, status, error)
         except Exception as exc:
             logger.warning("Could not update MCPServer status: %s", exc)
+
+    @staticmethod
+    def _update_db_status_sync(server_name: str, status: str, error: str = "") -> None:
+        from django.utils import timezone
+        from agent.models import MCPServer
+
+        update: dict = {"connection_status": status, "last_error": error}
+        if status == "connected":
+            update["last_connected_at"] = timezone.now()
+        MCPServer.objects.filter(name=server_name).update(**update)
+        if status == "error":
+            MCPServer.objects.filter(name=server_name).update(enabled=False)
