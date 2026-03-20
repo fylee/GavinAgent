@@ -59,8 +59,10 @@ class MCPServer(TimeStampedModel):
     # sse: remote endpoint URL
     url         = CharField(max_length=500, blank=True)
 
-    # Encrypted at rest. Values are injected as env vars when launching stdio
-    # servers, or sent as auth headers for SSE servers.
+    # Encrypted at rest. For stdio servers: injected as environment variables
+    # when launching the process. For SSE servers: injected as HTTP request
+    # headers (key = header name, value = header value, e.g.
+    # {"Authorization": "Bearer ghp_..."}).
     # Format: {"GITHUB_TOKEN": "ghp_...", "API_KEY": "sk-..."}
     env         = EncryptedJSONField(default=dict)
 
@@ -71,6 +73,11 @@ class MCPServer(TimeStampedModel):
     # If True, all read_resource calls for this server are auto-approved.
     # Kept separate from auto_approve_tools for clarity.
     auto_approve_resources = BooleanField(default=False)
+
+    # Resource URIs to fetch and inject into every agent run's system context.
+    # Suitable for small, stable resources (e.g. database schema, project README).
+    # Not a standard MCP protocol field — project-specific config.
+    always_include_resources = JSONField(default=list)
 
     # Last known connection state — persisted for UI display across restarts.
     class ConnectionStatus(models.TextChoices):
@@ -101,11 +108,14 @@ agent/
 └── mcp/
     ├── __init__.py
     ├── client.py       ← MCPClient: connects to one server, calls list_tools /
-    │                     list_resources / call_tool / read_resource
+    │                     list_resources / call_tool / read_resource.
+    │                     Defines MCPTimeoutError (raised when server does not
+    │                     respond within AGENT_TOOL_TIMEOUT_SECONDS).
     ├── pool.py         ← MCPConnectionPool: process-level singleton, manages
     │                     all active MCP connections
-    └── registry.py     ← MCPToolRegistry: wraps MCP tools as LangGraph tools,
-                          namespaced as "<server_name>__<tool_name>"
+    └── registry.py     ← MCPToolRegistry: stores MCPToolEntry objects namespaced
+                          as "<server_name>__<tool_name>", exposes to_llm_schemas()
+                          and get(namespaced_name) for use in graph nodes
 ```
 
 ---
@@ -169,7 +179,7 @@ MCPConnectionPool (process-level singleton, runs in dedicated thread)
     │     - Health check: ping every 60s; silent failure triggers reconnect
     │
     └── sse servers   → persistent httpx async client with keep-alive
-          - Health check: GET /health or send ping every 60s
+          - Health check: MCP ping/pong every 60s; silent failure triggers reconnect
 ```
 
 ### On config change
@@ -197,18 +207,58 @@ MCPClient.list_tools()
 MCPToolRegistry.register(server_name, tools)
     │
     ▼
-Each tool wrapped as LangGraph StructuredTool:
-    name:        "<server_name>__<tool_name>"
+Each tool stored as an MCPToolEntry:
+    name:        "<server_name>__<tool_name>"   (namespaced to avoid collisions)
     description: from MCP tool schema
-    args_schema: from MCP inputSchema (JSON Schema → Pydantic)
-    func:        MCPClient.call_tool(tool_name, input)
-    │
-    ▼
-Injected into ToolExecutor alongside built-in tools and Skills
+    parameters:  MCP inputSchema (already JSON Schema — used directly)
+    server_name: for routing back to the right MCPClient
+    tool_name:   original name (without prefix)
 ```
 
-Approval check: if `tool_name` (without prefix) is in `MCPServer.auto_approve_tools`
-→ auto execute; otherwise → `ToolExecution(status=pending)`, run pauses for approval.
+### Integration with the agent graph
+
+MCP tools plug into the three existing graph nodes as a **parallel path** alongside
+built-in `BaseTool` instances:
+
+**`call_llm`** — schema exposure:
+```python
+# Existing
+tools_schema = [t.to_llm_schema() for t in all_tools().values()]
+# Added
+tools_schema += mcp_registry.to_llm_schemas()   # same {type, function, ...} format
+```
+
+**`check_approval`** — approval routing:
+```python
+tool = get_tool(tool_name)          # built-in lookup (returns None for MCP tools)
+if tool is None:
+    mcp_entry = mcp_registry.get(tool_name)   # namespaced lookup
+    if mcp_entry:
+        server = MCPServer.objects.get(name=mcp_entry.server_name)
+        requires = mcp_entry.tool_name not in server.auto_approve_tools
+    else:
+        requires = True             # unknown tool → always require approval
+```
+
+**`execute_tools`** — dispatch:
+```python
+tool = get_tool(tool_name)
+if tool is not None:
+    result = tool.execute(**args)   # existing built-in path
+else:
+    mcp_entry = mcp_registry.get(tool_name)
+    if mcp_entry:
+        result = mcp_pool.call_tool(mcp_entry.server_name, mcp_entry.tool_name, args)
+    else:
+        result = ToolResult(error=f"Unknown tool: {tool_name}")
+```
+
+This keeps the existing `BaseTool` architecture intact and adds MCP as a
+parallel lookup — no changes to the built-in tool classes required.
+
+Note: `langchain-mcp-adapters` is **not used**. MCP tools are integrated
+directly via `MCPToolRegistry` to keep the architecture consistent with the
+existing custom node approach.
 
 ---
 
@@ -224,9 +274,13 @@ On connection, also call `MCPClient.list_resources()`. Store resource metadata
 **Mode 1 — Context injection (`assemble_context` node)**
 
 Resources where `MCPServer.always_include_resources` contains their URI are fetched
-and appended to the system context at the start of every agent run. This is a
-`JSONField(default=list)` on `MCPServer` — not a standard MCP protocol field.
-Suitable for small, stable resources (e.g. database schema, project README).
+and appended to the system context at the start of every agent run. Suitable for
+small, stable resources (e.g. database schema, project README).
+
+Note: `assemble_context` in `agent/graph/nodes.py` is currently a no-op (`return {}`).
+This spec requires it to be implemented: fetch always-include resources from all
+connected MCP servers and append them to the system prompt assembled by
+`_build_system_context()`.
 
 **Mode 2 — On-demand via `read_resource` tool**
 
@@ -323,8 +377,10 @@ For production Docker deployments, use a base image that includes Node.js
 ```bash
 uv add django-fernet-fields   # encrypted model fields
 uv add mcp                    # MCP Python SDK (client)
-uv add langchain-mcp-adapters # converts MCP tools to LangGraph StructuredTools
 ```
+
+`langchain-mcp-adapters` is not used — MCP tools are integrated directly via
+`MCPToolRegistry` to stay consistent with the existing custom node architecture.
 
 ---
 
@@ -371,10 +427,11 @@ FERNET_KEY_PREVIOUS=  # optional — only during key rotation
 
 ## Testing
 
-### Additional test dependency
+### Additional test dependencies
 
 ```bash
 uv add --dev pytest-asyncio   # for async pool and client tests
+uv add --dev pytest-mock      # for mocker fixture used in MCPClient tests
 ```
 
 ### Fixtures (`agent/tests/conftest.py`)
@@ -526,6 +583,24 @@ def test_real_filesystem_server(tmp_path):
 | Real SSE MCP servers | Require external network; tested manually against GitHub/Brave servers |
 | Fernet key generation correctness | Delegated to `cryptography` library; trust well-tested dependency |
 | Multi-worker stdio process isolation | Infrastructure concern; covered by deployment runbook, not unit tests |
+
+---
+
+## Implementation Steps
+
+1. `uv add django-fernet-fields mcp`
+2. Add `FERNET_KEY` to `.env` and `FERNET_KEYS` to `config/settings/base.py`
+3. Create `MCPServer` model + migration (including `always_include_resources` field)
+4. Create `agent/mcp/` package: `client.py`, `pool.py`, `registry.py`
+5. Start pool on Django init (`agent/apps.py`) and Celery worker init (`config/celery.py`)
+6. Update `agent/graph/nodes.py`:
+   - `call_llm`: add `mcp_registry.to_llm_schemas()` to `tools_schema`
+   - `check_approval`: add MCP approval routing after built-in `get_tool()` lookup
+   - `execute_tools`: add MCP dispatch after built-in tool execution attempt
+   - `assemble_context`: implement resource injection from `always_include_resources`
+7. Add management UI views + URLs + templates
+8. Add `uv add --dev pytest-asyncio pytest-mock` and write tests
+9. Update deployment docs with Node.js >= 18 prerequisite
 
 ---
 
