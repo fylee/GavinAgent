@@ -30,8 +30,12 @@ def _after_check_approval(state: AgentState) -> str:
     return "execute_tools"
 
 
+MAX_TOOL_CALL_ROUNDS = 10
+
+
 def _after_execute_tools(state: AgentState) -> str:
-    # Feed tool results back to LLM
+    if state.get("tool_call_rounds", 0) >= MAX_TOOL_CALL_ROUNDS:
+        return "save_result"
     return "call_llm"
 
 
@@ -60,7 +64,11 @@ def build_graph() -> Any:
         _after_check_approval,
         {"execute_tools": "execute_tools", END: END},
     )
-    graph.add_edge("execute_tools", "call_llm")
+    graph.add_conditional_edges(
+        "execute_tools",
+        _after_execute_tools,
+        {"call_llm": "call_llm", "save_result": "save_result"},
+    )
     graph.add_edge("save_result", END)
 
     return graph.compile()

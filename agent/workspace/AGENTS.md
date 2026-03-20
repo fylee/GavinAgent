@@ -36,6 +36,8 @@ Your job is not done until the user's original request is fully answered.
 - Do not rely on memorised figures for time-sensitive data — search first.
 - Each URL should be read at most once. If the content is truncated, extract
   what you can — do not re-read the same URL.
+- Stop searching once you have enough data to answer. Do not keep browsing
+  for a "better" source if you already have usable information.
 
 ## Charts
 

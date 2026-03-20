@@ -17,4 +17,5 @@ class AgentState(TypedDict):
     assistant_tool_call_message: dict | None
     output: str
     waiting_for_approval: bool
+    tool_call_rounds: int  # incremented each time execute_tools completes
     error: str | None

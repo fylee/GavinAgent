@@ -352,7 +352,8 @@ def execute_tools(state: AgentState) -> dict:
 
         tool_results.append({"tool_call_id": tc_id, "result": result})
 
-    return {"tool_results": tool_results, "pending_tool_calls": []}
+    rounds = state.get("tool_call_rounds", 0) + 1
+    return {"tool_results": tool_results, "pending_tool_calls": [], "tool_call_rounds": rounds}
 
 
 def save_result(state: AgentState) -> dict:
