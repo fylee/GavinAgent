@@ -18,4 +18,5 @@ class AgentState(TypedDict):
     output: str
     waiting_for_approval: bool
     tool_call_rounds: int  # incremented each time execute_tools completes
+    visited_urls: list[str]  # URLs already fetched via web_read
     error: str | None

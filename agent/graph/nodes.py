@@ -269,10 +269,23 @@ def execute_tools(state: AgentState) -> dict:
 
     pending = state.get("pending_tool_calls", [])
     tool_results = []
+    visited_urls = list(state.get("visited_urls") or [])
 
     for tc in pending:
         tool_name = tc["name"]
         args = tc.get("arguments", {})
+
+        # Block duplicate web_read calls for the same URL
+        if tool_name == "web_read":
+            url = args.get("url", "")
+            if url in visited_urls:
+                tc_id = tc["id"]
+                tool_results.append({
+                    "tool_call_id": tc_id,
+                    "result": {"error": f"Already read {url} — use the content from the previous call."},
+                })
+                continue
+            visited_urls.append(url)
         tc_id = tc["id"]
 
         te_id = tc.get("tool_execution_id")
@@ -353,7 +366,12 @@ def execute_tools(state: AgentState) -> dict:
         tool_results.append({"tool_call_id": tc_id, "result": result})
 
     rounds = state.get("tool_call_rounds", 0) + 1
-    return {"tool_results": tool_results, "pending_tool_calls": [], "tool_call_rounds": rounds}
+    return {
+        "tool_results": tool_results,
+        "pending_tool_calls": [],
+        "tool_call_rounds": rounds,
+        "visited_urls": visited_urls,
+    }
 
 
 def save_result(state: AgentState) -> dict:

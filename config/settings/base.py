@@ -122,7 +122,7 @@ AGENT_TOOL_TIMEOUT_SECONDS = config(
 AGENT_BROWSER_TIMEOUT_SECONDS = config(
     "AGENT_BROWSER_TIMEOUT_SECONDS", default=60, cast=int
 )
-MAX_TOOL_OUTPUT_CHARS = config("MAX_TOOL_OUTPUT_CHARS", default=4000, cast=int)
+MAX_TOOL_OUTPUT_CHARS = config("MAX_TOOL_OUTPUT_CHARS", default=20000, cast=int)
 
 # MCP — Fernet encryption keys for MCPServer.env field
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
