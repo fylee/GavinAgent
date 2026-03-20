@@ -249,13 +249,13 @@ class MCPServer(TimeStampedModel):
     env = EncryptedJSONField(default=dict, blank=True)
 
     # Tool names that may execute without user approval
-    auto_approve_tools = models.JSONField(default=list)
+    auto_approve_tools = models.JSONField(default=list, blank=True)
 
     # If True, all read_resource calls for this server are auto-approved
     auto_approve_resources = models.BooleanField(default=False)
 
     # Resource URIs to inject into every agent run's system context
-    always_include_resources = models.JSONField(default=list)
+    always_include_resources = models.JSONField(default=list, blank=True)
 
     connection_status = models.CharField(
         max_length=20,
