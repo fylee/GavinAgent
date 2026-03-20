@@ -3,8 +3,11 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from django import forms
 from django.conf import settings
@@ -1094,9 +1097,17 @@ class MCPServerAddView(View):
         try:
             server.full_clean()
         except ValidationError as e:
-            msg = " ".join(str(v) for msgs in e.message_dict.values() for v in msgs)
+            logger.warning("MCPServer validation error | POST=%s | error=%s", dict(request.POST), e)
+            try:
+                msg = " | ".join(
+                    f"{k}: {', '.join(str(v) for v in vs)}"
+                    for k, vs in e.message_dict.items()
+                )
+            except AttributeError:
+                msg = str(e)
             if request.htmx:
-                return HttpResponse(f'<p class="text-red-400 text-sm">{msg}</p>', status=400)
+                # Return 200 so HTMX swaps the error into the DOM (4xx blocks swapping by default)
+                return HttpResponse(f'<p class="text-red-400 text-sm">{msg}</p>')
             return HttpResponse(msg, status=400)
 
         server.save()
@@ -1146,9 +1157,17 @@ class MCPServerDetailView(View):
         try:
             server.full_clean()
         except ValidationError as e:
-            msg = " ".join(str(v) for msgs in e.message_dict.values() for v in msgs)
+            logger.warning("MCPServer validation error | POST=%s | error=%s", dict(request.POST), e)
+            try:
+                msg = " | ".join(
+                    f"{k}: {', '.join(str(v) for v in vs)}"
+                    for k, vs in e.message_dict.items()
+                )
+            except AttributeError:
+                msg = str(e)
             if request.htmx:
-                return HttpResponse(f'<p class="text-red-400 text-sm">{msg}</p>', status=400)
+                # Return 200 so HTMX swaps the error into the DOM (4xx blocks swapping by default)
+                return HttpResponse(f'<p class="text-red-400 text-sm">{msg}</p>')
             return HttpResponse(msg, status=400)
 
         server.save()
