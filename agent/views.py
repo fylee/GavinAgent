@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import os
@@ -217,7 +218,7 @@ class MemoryView(View):
 
         out_of_sync = False
         if path.exists() and last_reembed:
-            file_mtime = timezone.datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+            file_mtime = timezone.datetime.fromtimestamp(path.stat().st_mtime, tz=datetime.timezone.utc)
             out_of_sync = file_mtime > last_reembed.created_at
         elif path.exists() and not last_reembed:
             out_of_sync = True
@@ -940,7 +941,7 @@ class WorkspaceFileListView(View):
             files.append({
                 "name": fname,
                 "exists": fpath.exists(),
-                "mtime": timezone.datetime.fromtimestamp(fpath.stat().st_mtime, tz=timezone.utc) if fpath.exists() else None,
+                "mtime": timezone.datetime.fromtimestamp(fpath.stat().st_mtime, tz=datetime.timezone.utc) if fpath.exists() else None,
                 "size": fpath.stat().st_size if fpath.exists() else 0,
             })
         return render(request, self.template_name, {"files": files})

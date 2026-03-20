@@ -11,10 +11,11 @@
 
   <form
     hx-post="{% if server %}{% url 'agent:mcp-detail' pk=server.id %}{% else %}{% url 'agent:mcp-add' %}{% endif %}"
-    hx-target="#mcp-server-list"
-    hx-swap="outerHTML"
+    hx-target="#mcp-form-error"
+    hx-swap="innerHTML"
     class="space-y-4">
     {% csrf_token %}
+    <div id="mcp-form-error"></div>
 
     {# Name #}
     <div>
