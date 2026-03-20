@@ -374,6 +374,54 @@ def execute_tools(state: AgentState) -> dict:
     }
 
 
+def force_conclude(state: AgentState) -> dict:
+    """Called when tool_call_rounds hits the limit. Ask the LLM to conclude with what it has."""
+    from core.llm import get_completion
+    from agent.models import AgentRun
+
+    model = _get_agent_model(state["agent_id"])
+    system_content = _build_system_context(state.get("input", ""))
+
+    messages: list[dict] = [{"role": "system", "content": system_content}]
+    if state.get("conversation_id"):
+        from chat.models import Message as ChatMessage
+        chat_msgs = list(
+            ChatMessage.objects.filter(conversation_id=state["conversation_id"])
+            .order_by("created_at")
+            .values("role", "content")
+        )
+        history = [{"role": m["role"], "content": m["content"]} for m in chat_msgs]
+        history = _truncate_history(history, settings.AGENT_CONTEXT_BUDGET_TOKENS, model)
+        messages.extend(history)
+    else:
+        messages.append({"role": "user", "content": state["input"]})
+
+    messages.append({
+        "role": "user",
+        "content": (
+            "You have reached the maximum number of tool-use rounds. "
+            "Based on all the information you have collected so far, "
+            "provide the best possible answer to the original request. "
+            "If data is incomplete, state what you found and what is missing."
+        ),
+    })
+
+    _run_obj = None
+    try:
+        from agent.models import AgentRun
+        _run_obj = AgentRun.objects.get(pk=state["run_id"])
+    except Exception:
+        pass
+
+    try:
+        response = get_completion(messages, model=model, source="agent", run=_run_obj)
+        output = response.choices[0].message.content or ""
+    except Exception as exc:
+        output = f"Reached tool-use limit. Error generating summary: {exc}"
+
+    return {"output": output, "pending_tool_calls": []}
+
+
 def save_result(state: AgentState) -> dict:
     """Save the final output as a chat.Message and mark AgentRun completed."""
     from chat.models import Message as ChatMessage

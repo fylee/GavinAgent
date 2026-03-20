@@ -10,6 +10,7 @@ from agent.graph.nodes import (
     call_llm,
     check_approval,
     execute_tools,
+    force_conclude,
     save_result,
 )
 from agent.graph.state import AgentState
@@ -35,7 +36,7 @@ MAX_TOOL_CALL_ROUNDS = 10
 
 def _after_execute_tools(state: AgentState) -> str:
     if state.get("tool_call_rounds", 0) >= MAX_TOOL_CALL_ROUNDS:
-        return "save_result"
+        return "force_conclude"
     return "call_llm"
 
 
@@ -50,6 +51,7 @@ def build_graph() -> Any:
     graph.add_node("call_llm", call_llm)
     graph.add_node("check_approval", check_approval)
     graph.add_node("execute_tools", execute_tools)
+    graph.add_node("force_conclude", force_conclude)
     graph.add_node("save_result", save_result)
 
     graph.set_entry_point("assemble_context")
@@ -67,8 +69,9 @@ def build_graph() -> Any:
     graph.add_conditional_edges(
         "execute_tools",
         _after_execute_tools,
-        {"call_llm": "call_llm", "save_result": "save_result"},
+        {"call_llm": "call_llm", "force_conclude": "force_conclude"},
     )
+    graph.add_edge("force_conclude", "save_result")
     graph.add_edge("save_result", END)
 
     return graph.compile()
