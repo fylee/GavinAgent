@@ -102,17 +102,22 @@ def call_llm(state: AgentState) -> dict:
 
     # When tool results exist, the preceding assistant message with tool_calls must
     # appear first — otherwise the API rejects the request.
+    # Only include results whose tool_call_id appears in the current assistant
+    # message — previous rounds' results have IDs from a different assistant
+    # message and would cause an API error.
     tool_results = state.get("tool_results", [])
-    if tool_results:
-        assistant_tool_msg = state.get("assistant_tool_call_message")
-        if assistant_tool_msg:
+    assistant_tool_msg = state.get("assistant_tool_call_message")
+    if tool_results and assistant_tool_msg:
+        valid_ids = {tc["id"] for tc in assistant_tool_msg.get("tool_calls", [])}
+        current_results = [tr for tr in tool_results if tr["tool_call_id"] in valid_ids]
+        if current_results:
             messages.append(assistant_tool_msg)
-        for tr in tool_results:
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tr["tool_call_id"],
-                "content": json.dumps(tr["result"]),
-            })
+            for tr in current_results:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tr["tool_call_id"],
+                    "content": json.dumps(tr["result"]),
+                })
 
     # Build tool schemas
     tools_schema = [t.to_llm_schema() for t in all_tools().values()]
@@ -214,7 +219,7 @@ def check_approval(state: AgentState) -> dict:
         run.status = AgentRun.Status.WAITING
         run.graph_state = {
             "pending_tool_calls": needs_approval,
-            "tool_results": list(state.get("tool_results", [])),
+            "tool_results": [],
             "assistant_tool_call_message": state.get("assistant_tool_call_message"),
         }
         run.save(update_fields=["status", "graph_state"])
