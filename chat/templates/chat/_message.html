@@ -1,0 +1,24 @@
+{% if message.role == 'user' %}
+{# ── User bubble ── #}
+<div class="flex justify-end px-4 py-1">
+  <div class="max-w-[75%] rounded-2xl rounded-br-sm px-4 py-2.5 text-sm text-white"
+       style="background-color: #40414f; white-space: pre-wrap;">{{ message.content }}</div>
+</div>
+
+{% elif message.role == 'assistant' %}
+{# ── Assistant message ── #}
+<div class="flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full">
+  <div class="flex-shrink-0 w-7 h-7 rounded-full bg-[#19c37d] flex items-center justify-center mt-0.5">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
+    </svg>
+  </div>
+  <div class="flex-1 min-w-0 pt-0.5">
+    <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed"
+         data-markdown>{{ message.content }}</div>
+    {% if message.model %}
+    <p class="text-[11px] text-gray-500 mt-1.5">{{ message.model }}</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

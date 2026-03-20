@@ -1,0 +1,51 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Workspace Files{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+
+  <h1 class="text-xl font-semibold text-white">Workspace Files</h1>
+
+  <p class="text-xs text-gray-500">
+    These files are read by the agent on every run. Edit them to adjust the agent's
+    personality, goals, and heartbeat tasks. <code class="font-mono">MEMORY.md</code> is
+    managed via the <a href="{% url 'agent:memory' %}" class="text-blue-400 hover:text-blue-300">Memory</a> page.
+  </p>
+
+  <div class="rounded-xl border border-white/10 overflow-hidden" style="background-color: #202123;">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-white/10 text-gray-400 text-xs uppercase tracking-wider">
+          <th class="px-4 py-3 text-left">File</th>
+          <th class="px-4 py-3 text-left">Size</th>
+          <th class="px-4 py-3 text-left">Last Modified</th>
+          <th class="px-4 py-3"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in files %}
+        <tr class="border-b border-white/5 hover:bg-white/5 transition-colors">
+          <td class="px-4 py-3">
+            <code class="text-blue-300 font-mono text-sm">{{ f.name }}</code>
+            {% if not f.exists %}
+            <span class="text-xs text-gray-500 ml-2">(not created yet)</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-gray-500 text-xs">
+            {% if f.exists %}{{ f.size }} bytes{% else %}—{% endif %}
+          </td>
+          <td class="px-4 py-3 text-gray-500 text-xs">
+            {% if f.mtime %}{{ f.mtime|date:"Y-m-d H:i" }}{% else %}—{% endif %}
+          </td>
+          <td class="px-4 py-3 text-right">
+            <a href="{% url 'agent:workspace-file' filename=f.name %}"
+               class="text-xs text-blue-400 hover:text-blue-300 transition-colors">Edit</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,239 @@
+{% extends "chat/base_chat.html" %}
+
+{% block title %}{{ conversation.title|default:"New Chat" }} — Chat{% endblock %}
+
+{% block extra_head %}
+<style>
+  .settings-panel { transition: width 0.2s ease, opacity 0.2s ease; }
+</style>
+{% endblock %}
+
+{% block header_content %}
+{# Conversation title #}
+<span class="flex-1 text-sm font-medium text-gray-200 truncate">
+  {{ conversation.title|default:"New Chat" }}
+</span>
+
+{# Model selector #}
+<select name="model"
+        hx-patch="{% url 'chat:update' pk=conversation.id %}"
+        hx-trigger="change"
+        hx-swap="none"
+        class="text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-white/30 cursor-pointer text-gray-200 border border-white/20"
+        style="background-color: #40414f;">
+  <option value="" {% if not conversation.model %}selected{% endif %}>Default model</option>
+  {% for value, label in available_models %}
+  <option value="{{ value }}" {% if conversation.model == value %}selected{% endif %}>{{ label }}</option>
+  {% endfor %}
+</select>
+
+{# Settings toggle #}
+<button @click="settingsOpen = !settingsOpen"
+        :class="settingsOpen ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white hover:bg-white/10'"
+        class="p-1.5 rounded-lg transition-colors">
+  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+  </svg>
+</button>
+{% endblock %}
+
+{% block chat_content %}
+<div class="flex flex-1 min-h-0 overflow-hidden">
+
+  {# ── Message + input column ── #}
+  <div class="flex flex-col flex-1 min-w-0 overflow-hidden">
+
+    {# Message list #}
+    <div id="message-list"
+         class="flex-1 overflow-y-auto py-6 space-y-1 min-h-0">
+      {% for message in chat_messages %}
+        {% include "chat/_message.html" with message=message %}
+      {% endfor %}
+    </div>
+
+    {# Input bar #}
+    <div class="flex-shrink-0 px-4 py-4 border-t border-white/10">
+      <form id="message-form"
+            hx-post="{% url 'chat:message-create' conversation_pk=conversation.id %}"
+            hx-target="#message-list"
+            hx-swap="beforeend"
+            class="max-w-3xl mx-auto flex items-end gap-2">
+        {% csrf_token %}
+        <textarea name="content"
+                  id="message-input"
+                  rows="1"
+                  placeholder="Message…"
+                  required
+                  class="flex-1 resize-none rounded-2xl px-4 py-3 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-white/20 text-white placeholder-gray-500 border border-white/10"
+                  style="background-color: #40414f; max-height: 160px; overflow-y: auto;"
+        ></textarea>
+        <button type="submit"
+                id="send-btn"
+                class="flex-shrink-0 text-white rounded-xl p-3 transition-colors disabled:opacity-40 border border-white/20 hover:bg-white/10"
+                style="background-color: #40414f;">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </button>
+      </form>
+    </div>
+
+  </div>
+
+  {# ── Settings panel ── #}
+  <aside x-show="settingsOpen"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 translate-x-4"
+         x-transition:enter-end="opacity-100 translate-x-0"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100 translate-x-0"
+         x-transition:leave-end="opacity-0 translate-x-4"
+         class="w-80 flex-shrink-0 flex flex-col border-l border-white/10 overflow-y-auto"
+         style="background-color: #202123;">
+
+    <div class="p-4 border-b border-white/10 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-white">Chat settings</h2>
+      <button @click="settingsOpen = false" class="text-gray-400 hover:text-white transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form id="settings-form"
+          hx-patch="{% url 'chat:update' pk=conversation.id %}"
+          hx-trigger="change delay:400ms"
+          hx-swap="none"
+          class="flex flex-col gap-5 p-4">
+      {% csrf_token %}
+
+      {# System prompt #}
+      <div class="flex flex-col gap-1.5">
+        <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">System prompt</label>
+        <textarea name="system_prompt"
+                  rows="6"
+                  placeholder="You are a helpful assistant…"
+                  class="w-full resize-none rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 border border-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
+                  style="background-color: #40414f;">{{ conversation.system_prompt }}</textarea>
+        <p class="text-[11px] text-gray-500">Sent as the system message before all conversations.</p>
+      </div>
+
+      {# Temperature #}
+      <div class="flex flex-col gap-1.5" x-data="{ temp: '{{ conversation.temperature|default:'' }}' }">
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Temperature</label>
+          <span class="text-xs text-gray-300" x-text="temp === '' ? 'Default' : temp"></span>
+        </div>
+        <input type="range"
+               name="temperature"
+               min="0" max="2" step="0.1"
+               x-model="temp"
+               value="{{ conversation.temperature|default:'' }}"
+               class="w-full accent-white cursor-pointer">
+        <div class="flex justify-between text-[11px] text-gray-500">
+          <span>Precise (0)</span>
+          <span>Creative (2)</span>
+        </div>
+        <button type="button"
+                @click="temp = ''; $el.closest('form').querySelector('[name=temperature]').value = ''; htmx.trigger($el.closest('form'), 'change')"
+                class="text-[11px] text-gray-500 hover:text-gray-300 text-left transition-colors">
+          Reset to default
+        </button>
+      </div>
+
+      {# Max tokens #}
+      <div class="flex flex-col gap-1.5">
+        <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Max output tokens</label>
+        <input type="number"
+               name="max_tokens"
+               min="1" max="32000"
+               value="{{ conversation.max_tokens|default:'' }}"
+               placeholder="No limit"
+               class="w-full rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 border border-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
+               style="background-color: #40414f;">
+        <p class="text-[11px] text-gray-500">Leave blank to use the model's default.</p>
+      </div>
+
+      {# Save indicator #}
+      <p class="text-[11px] text-gray-500 text-center"
+         id="settings-saved"
+         style="opacity:0; transition: opacity 0.3s;">
+        Saved
+      </p>
+    </form>
+
+    {# Agent toggle — separate from settings form #}
+    <div class="px-4 pb-4 border-t border-white/10 pt-4 flex flex-col gap-1.5">
+      <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Agentic mode</label>
+      {% include "chat/_agent_toggle.html" %}
+    </div>
+
+  </aside>
+
+</div>
+
+<script>
+(function () {
+  const msgList = document.getElementById('message-list');
+  const form = document.getElementById('message-form');
+  const textarea = document.getElementById('message-input');
+  const sendBtn = document.getElementById('send-btn');
+
+  function scrollBottom() { msgList.scrollTop = msgList.scrollHeight; }
+  scrollBottom();
+
+  textarea.addEventListener('input', function () {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+  });
+
+  textarea.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  form.addEventListener('htmx:beforeRequest', function () {
+    textarea.disabled = true;
+    sendBtn.disabled = true;
+  });
+
+  form.addEventListener('htmx:afterRequest', function (e) {
+    textarea.disabled = false;
+    sendBtn.disabled = false;
+    if (e.detail.successful) {
+      textarea.value = '';
+      textarea.style.height = 'auto';
+      scrollBottom();
+    }
+    textarea.focus();
+  });
+
+  msgList.addEventListener('htmx:afterSwap', scrollBottom);
+
+  // Show "Saved" feedback after settings PATCH
+  const settingsForm = document.getElementById('settings-form');
+  const savedEl = document.getElementById('settings-saved');
+  if (settingsForm) {
+    settingsForm.addEventListener('htmx:afterRequest', function (e) {
+      if (e.detail.successful) {
+        savedEl.style.opacity = '1';
+        setTimeout(() => { savedEl.style.opacity = '0'; }, 1500);
+      }
+    });
+  }
+
+  function renderMarkdown() {
+    document.querySelectorAll('[data-markdown]:not([data-rendered])').forEach(function (el) {
+      el.innerHTML = marked.parse(el.textContent);
+      el.dataset.rendered = '1';
+    });
+  }
+  document.addEventListener('htmx:afterSwap', renderMarkdown);
+  renderMarkdown();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Agent Dashboard{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-8">
+
+  <h1 class="text-xl font-semibold text-white">Dashboard</h1>
+
+  {# Status bar #}
+  <div class="grid grid-cols-3 gap-4">
+    <div class="rounded-xl p-4 border border-white/10" style="background-color: #202123;">
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Default Agent</p>
+      {% if default_agent %}
+        <p class="text-white font-medium">{{ default_agent.name }}</p>
+        <p class="text-xs text-gray-400">{{ default_agent.model }}</p>
+      {% else %}
+        <p class="text-yellow-400 text-sm">None configured</p>
+      {% endif %}
+    </div>
+    <div class="rounded-xl p-4 border border-white/10" style="background-color: #202123;">
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Last Heartbeat</p>
+      {% if last_heartbeat %}
+        <p class="text-white font-medium">{{ last_heartbeat.triggered_at|date:"Y-m-d H:i" }}</p>
+        <span class="text-xs px-2 py-0.5 rounded-full
+          {% if last_heartbeat.status == 'ok' %}bg-green-900 text-green-300
+          {% elif last_heartbeat.status == 'acted' %}bg-blue-900 text-blue-300
+          {% else %}bg-red-900 text-red-300{% endif %}">
+          {{ last_heartbeat.get_status_display }}
+        </span>
+      {% else %}
+        <p class="text-gray-500 text-sm">No heartbeats yet</p>
+      {% endif %}
+    </div>
+    <div class="rounded-xl p-4 border border-white/10" style="background-color: #202123;">
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Active Runs</p>
+      <p class="text-2xl font-bold text-white">{{ active_runs|length }}</p>
+    </div>
+  </div>
+
+  {# Active runs #}
+  {% if active_runs %}
+  <div>
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Active Runs</h2>
+    <div class="space-y-2">
+      {% for run in active_runs %}
+      <div class="rounded-lg px-4 py-3 border border-white/10 flex items-center gap-4"
+           style="background-color: #202123;">
+        <span class="text-xs px-2 py-0.5 rounded-full
+          {% if run.status == 'running' %}bg-blue-900 text-blue-300
+          {% elif run.status == 'waiting' %}bg-yellow-900 text-yellow-300
+          {% else %}bg-gray-700 text-gray-300{% endif %}">
+          {{ run.get_status_display }}
+        </span>
+        <span class="text-sm text-gray-300 truncate flex-1">{{ run.input|truncatechars:60 }}</span>
+        <span class="text-xs text-gray-500">{{ run.agent.name }}</span>
+        <a href="{% url 'agent:detail' pk=run.id %}"
+           class="text-xs text-blue-400 hover:text-blue-300">View</a>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# Recent runs #}
+  <div>
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Recent Runs</h2>
+    <div class="space-y-2">
+      {% for run in recent_runs %}
+      <div class="rounded-lg px-4 py-3 border border-white/10 flex items-center gap-4"
+           style="background-color: #202123;">
+        <span class="text-xs px-2 py-0.5 rounded-full
+          {% if run.status == 'completed' %}bg-green-900 text-green-300
+          {% elif run.status == 'failed' %}bg-red-900 text-red-300
+          {% elif run.status == 'running' %}bg-blue-900 text-blue-300
+          {% elif run.status == 'waiting' %}bg-yellow-900 text-yellow-300
+          {% else %}bg-gray-700 text-gray-300{% endif %}">
+          {{ run.get_status_display }}
+        </span>
+        <span class="text-sm text-gray-300 truncate flex-1">{{ run.input|truncatechars:80 }}</span>
+        <span class="text-xs text-gray-500">{{ run.created_at|date:"m-d H:i" }}</span>
+        <a href="{% url 'agent:detail' pk=run.id %}"
+           class="text-xs text-blue-400 hover:text-blue-300">View</a>
+      </div>
+      {% empty %}
+      <p class="text-gray-500 text-sm">No runs yet.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

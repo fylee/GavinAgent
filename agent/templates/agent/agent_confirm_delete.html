@@ -1,0 +1,73 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Delete Agent{% endblock %}
+
+{% block content %}
+<div class="max-w-lg mx-auto space-y-6">
+
+  <div class="flex items-center gap-4">
+    <a href="{% url 'agent:agent-list' %}" class="text-gray-400 hover:text-white text-sm">← Agents</a>
+    <h1 class="text-xl font-semibold text-white">Delete Agent</h1>
+  </div>
+
+  <div class="rounded-xl border border-red-800/60 p-6 space-y-4" style="background-color: #202123;">
+    <p class="text-white">
+      Are you sure you want to delete <strong>{{ agent.name }}</strong>?
+    </p>
+
+    <div class="grid grid-cols-2 gap-3 text-sm">
+      <div class="rounded-lg border border-white/10 px-4 py-3" style="background-color: #2a2b32;">
+        <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Total Runs</p>
+        <p class="text-white font-semibold text-lg">{{ total_runs }}</p>
+      </div>
+      <div class="rounded-lg border border-white/10 px-4 py-3" style="background-color: #2a2b32;">
+        <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Active Runs</p>
+        <p class="font-semibold text-lg {% if active_runs > 0 %}text-red-400{% else %}text-white{% endif %}">
+          {{ active_runs }}
+        </p>
+      </div>
+    </div>
+
+    {% if active_runs > 0 %}
+    <div class="rounded-lg border border-red-700 bg-red-900/20 px-4 py-3">
+      <p class="text-red-400 text-sm">
+        Cannot delete: this agent has {{ active_runs }} active run(s) (pending or running).
+        Cancel them before deleting.
+      </p>
+    </div>
+    {% elif total_runs > 0 %}
+    <div class="rounded-lg border border-yellow-700 bg-yellow-900/10 px-4 py-3">
+      <p class="text-yellow-300 text-sm">
+        This agent has {{ total_runs }} historical run(s). It will be <strong>deactivated</strong>
+        (soft delete) rather than removed. Any pending/waiting runs will be cancelled.
+        {% if agent.is_default %}
+        <br><strong>Warning:</strong> This agent is the default — no default will be set after deactivation.
+        {% endif %}
+      </p>
+    </div>
+    {% else %}
+    <div class="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+      <p class="text-gray-300 text-sm">
+        This agent has no runs and will be <strong>permanently deleted</strong>.
+      </p>
+    </div>
+    {% endif %}
+
+    <div class="flex items-center gap-3 pt-2">
+      {% if active_runs == 0 %}
+      <form method="post" action="{% url 'agent:agent-delete' pk=agent.id %}">
+        {% csrf_token %}
+        <button type="submit"
+                class="px-5 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-medium transition-colors">
+          {% if total_runs > 0 %}Deactivate Agent{% else %}Delete Agent{% endif %}
+        </button>
+      </form>
+      {% endif %}
+      <a href="{% url 'agent:agent-list' %}"
+         class="px-5 py-2 rounded-lg border border-white/20 text-gray-400 hover:text-white text-sm transition-colors">
+        Cancel
+      </a>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

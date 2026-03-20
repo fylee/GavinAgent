@@ -1,0 +1,129 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Agent Memory{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6" x-data="{ view: 'raw' }">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-semibold text-white">Long-term Memory</h1>
+    <div class="flex items-center gap-2">
+      {# View toggle #}
+      <div class="flex rounded-lg border border-white/10 overflow-hidden text-xs">
+        <button @click="view = 'raw'"
+                :class="view === 'raw' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'"
+                class="px-3 py-1.5 transition-colors">Raw</button>
+        <button @click="view = 'paragraph'"
+                :class="view === 'paragraph' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'"
+                class="px-3 py-1.5 transition-colors">Paragraphs</button>
+      </div>
+      <form method="post" action="{% url 'agent:memory-reembed' %}">
+        {% csrf_token %}
+        <button type="submit"
+                hx-post="{% url 'agent:memory-reembed' %}"
+                hx-target="#reembed-status"
+                hx-swap="outerHTML"
+                class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
+          Re-embed
+        </button>
+      </form>
+    </div>
+  </div>
+
+  {# Embed status bar #}
+  <div class="rounded-lg border border-white/10 px-4 py-3 flex items-center gap-4 text-sm"
+       style="background-color: #202123;">
+    <span class="text-gray-400">
+      <span class="text-white font-medium">{{ memory_count }}</span> memory records
+    </span>
+    {% if last_reembed %}
+    <span class="text-gray-400">
+      Last embed: <span class="text-white">{{ last_reembed.created_at|date:"Y-m-d H:i" }}</span>
+      ({{ last_reembed.created_at|timesince }} ago)
+    </span>
+    {% else %}
+    <span class="text-gray-500">Not yet embedded</span>
+    {% endif %}
+    {% if out_of_sync %}
+    <span class="text-xs px-2 py-0.5 rounded-full bg-yellow-900 text-yellow-300 ml-auto">
+      Out of sync — re-embed recommended
+    </span>
+    {% endif %}
+    <div id="reembed-status"></div>
+  </div>
+
+  {# Memory search #}
+  <div>
+    <input type="text"
+           name="q"
+           placeholder="Search memories…"
+           hx-get="{% url 'agent:memory-search' %}"
+           hx-trigger="input changed delay:400ms"
+           hx-target="#memory-search-results"
+           class="w-full px-3 py-2 rounded-lg border border-white/10 text-white text-sm focus:outline-none focus:ring-2 focus:ring-white/20"
+           style="background-color: #202123;">
+    <div id="memory-search-results" class="mt-2"></div>
+  </div>
+
+  {# Raw view #}
+  <div x-show="view === 'raw'">
+    <form method="post" action="{% url 'agent:memory' %}"
+          hx-post="{% url 'agent:memory' %}"
+          hx-target="#save-status"
+          hx-swap="outerHTML">
+      {% csrf_token %}
+      <textarea name="content"
+                rows="24"
+                class="w-full font-mono text-sm text-gray-100 rounded-xl px-4 py-3 border border-white/10 focus:outline-none focus:ring-2 focus:ring-white/20 resize-y"
+                style="background-color: #202123;">{{ memory_content }}</textarea>
+      <div class="flex items-center gap-3 mt-3">
+        <button type="submit"
+                class="text-sm px-4 py-2 rounded-lg border border-white/20 text-white hover:bg-white/10 transition-colors">
+          Save
+        </button>
+        <div id="save-status" class="text-sm text-gray-400"></div>
+      </div>
+    </form>
+  </div>
+
+  {# Paragraph view #}
+  <div x-show="view === 'paragraph'" class="space-y-3">
+    {% for para in paragraphs %}
+    {% include "agent/_paragraph_card.html" with para=para %}
+    {% empty %}
+    <p class="text-gray-500 text-sm">No paragraphs in MEMORY.md yet.</p>
+    {% endfor %}
+
+    {# Add paragraph #}
+    <div x-data="{ adding: false, content: '' }">
+      <button @click="adding = true" x-show="!adding"
+              class="text-xs px-3 py-2 rounded-lg border border-dashed border-white/20 text-gray-400 hover:text-white hover:border-white/40 w-full transition-colors">
+        + Add paragraph
+      </button>
+      <div x-show="adding" class="rounded-xl border border-white/10 p-4 space-y-3"
+           style="background-color: #202123;">
+        <textarea x-model="content" rows="4" placeholder="New paragraph content…"
+                  class="w-full px-3 py-2 rounded-lg border border-white/10 text-white text-sm focus:outline-none focus:ring-2 focus:ring-white/20 resize-y"
+                  style="background-color: #2a2b32;"></textarea>
+        <div class="flex gap-2">
+          <button @click="
+            if (!content.trim()) return;
+            fetch('{% url 'agent:memory-paragraph-edit' %}', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': '{{ csrf_token }}'},
+              body: 'hash=NEW_PARAGRAPH_ADD&content=' + encodeURIComponent(content)
+            }).then(() => { adding = false; location.reload(); })
+          "
+          class="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+            Save
+          </button>
+          <button @click="adding = false; content = ''"
+                  class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-400 hover:text-white transition-colors">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

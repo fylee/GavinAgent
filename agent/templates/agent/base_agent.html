@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Agent{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body class="h-full flex flex-col"
+      style="background-color: #343541; color: #ececf1;"
+      hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+
+  {# Nav #}
+  <nav class="flex-shrink-0 border-b border-white/10 px-6 py-3 flex items-center gap-4"
+       style="background-color: #202123;">
+    <span class="text-white font-semibold text-sm mr-2">Agent</span>
+    <a href="{% url 'agent:dashboard' %}" class="text-gray-400 hover:text-white text-sm transition-colors">Dashboard</a>
+    <a href="{% url 'agent:agent-list' %}" class="text-gray-400 hover:text-white text-sm transition-colors">Agents</a>
+    <a href="{% url 'agent:list' %}" class="text-gray-400 hover:text-white text-sm transition-colors">Runs</a>
+    <a href="{% url 'agent:monitoring' %}" class="text-gray-400 hover:text-white text-sm transition-colors">Monitoring</a>
+    <a href="{% url 'agent:logs' %}" class="text-gray-400 hover:text-white text-sm transition-colors">Logs</a>
+    <a href="{% url 'agent:memory' %}" class="text-gray-400 hover:text-white text-sm transition-colors">Memory</a>
+    <a href="{% url 'agent:tools' %}" class="text-gray-400 hover:text-white text-sm transition-colors">Tools</a>
+    <a href="{% url 'agent:skills' %}" class="text-gray-400 hover:text-white text-sm transition-colors">Skills</a>
+    <a href="{% url 'agent:workspace' %}" class="text-gray-400 hover:text-white text-sm transition-colors">Workspace</a>
+    <div class="flex-1"></div>
+    <a href="/chat/" class="text-gray-400 hover:text-white text-sm transition-colors">← Chat</a>
+  </nav>
+
+  {# Content #}
+  <main class="flex-1 overflow-y-auto p-6">
+    {% block content %}{% endblock %}
+  </main>
+
+</body>
+</html>

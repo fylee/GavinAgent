@@ -1,0 +1,159 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Agent Runs{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-semibold text-white">Runs</h1>
+    {# New run toggle #}
+    <div x-data="{ open: false }">
+      <button @click="open = !open"
+              class="text-sm px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+        + New Run
+      </button>
+      <div x-show="open" x-cloak
+           class="absolute right-6 mt-2 w-96 rounded-xl border border-white/10 p-4 z-50"
+           style="background-color: #202123;">
+        {% if agents %}
+        <form method="post" action="{% url 'agent:create' %}"
+              hx-post="{% url 'agent:create' %}"
+              class="space-y-3">
+          {% csrf_token %}
+          <div>
+            <label class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Agent</label>
+            <select name="agent_id"
+                    class="w-full px-3 py-2 rounded-lg border border-white/10 text-white text-sm focus:outline-none"
+                    style="background-color: #2a2b32;" required>
+              <option value="">Select agent…</option>
+              {% for a in agents %}
+              <option value="{{ a.id }}">{{ a.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Input</label>
+            <textarea name="input" rows="4" placeholder="What should the agent do?"
+                      class="w-full px-3 py-2 rounded-lg border border-white/10 text-white text-sm focus:outline-none resize-y"
+                      style="background-color: #2a2b32;" required></textarea>
+          </div>
+          <button type="submit"
+                  class="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors">
+            Run Agent
+          </button>
+        </form>
+        {% else %}
+        <p class="text-gray-500 text-sm">
+          No active agents.
+          <a href="{% url 'agent:agent-create' %}" class="text-blue-400 hover:text-blue-300">Create one.</a>
+        </p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Filter bar #}
+  <div class="flex items-center gap-3"
+       hx-push-url="true">
+    <label class="text-xs text-gray-400">Status</label>
+    <select name="status"
+            hx-get="{% url 'agent:list' %}"
+            hx-target="body"
+            hx-push-url="true"
+            class="px-3 py-1.5 rounded-lg border border-white/10 text-white text-sm focus:outline-none"
+            style="background-color: #2a2b32;">
+      <option value="" {% if not status_filter %}selected{% endif %}>All statuses</option>
+      {% for val, label in status_choices %}
+      <option value="{{ val }}" {% if status_filter == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <label class="text-xs text-gray-400">Source</label>
+    <select name="source"
+            hx-get="{% url 'agent:list' %}"
+            hx-target="body"
+            hx-push-url="true"
+            class="px-3 py-1.5 rounded-lg border border-white/10 text-white text-sm focus:outline-none"
+            style="background-color: #2a2b32;">
+      <option value="" {% if not source_filter %}selected{% endif %}>All sources</option>
+      {% for val, label in source_choices %}
+      <option value="{{ val }}" {% if source_filter == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  {# Runs table — auto-refreshes every 2.5s #}
+  <div id="runs-table-container"
+       hx-get="{% url 'agent:list' %}{% if status_filter %}?status={{ status_filter }}{% endif %}{% if source_filter %}{% if status_filter %}&{% else %}?{% endif %}source={{ source_filter }}{% endif %}"
+       hx-trigger="every 2500ms"
+       hx-target="#runs-table-container"
+       hx-select="#runs-table-container"
+       hx-swap="outerHTML">
+  <div class="rounded-xl border border-white/10 overflow-hidden" style="background-color: #202123;">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-white/10 text-gray-400 text-xs uppercase tracking-wider">
+          <th class="px-4 py-3 text-left">Agent</th>
+          <th class="px-4 py-3 text-left">Source</th>
+          <th class="px-4 py-3 text-left">Status</th>
+          <th class="px-4 py-3 text-left">Input</th>
+          <th class="px-4 py-3 text-left">Created</th>
+          <th class="px-4 py-3"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr class="border-b border-white/5 hover:bg-white/5 transition-colors">
+          <td class="px-4 py-3 text-gray-300">{{ run.agent.name }}</td>
+          <td class="px-4 py-3 text-gray-400 text-xs">{{ run.get_trigger_source_display }}</td>
+          <td class="px-4 py-3">
+            <span class="text-xs px-2 py-0.5 rounded-full
+              {% if run.status == 'completed' %}bg-green-900 text-green-300
+              {% elif run.status == 'failed' %}bg-red-900 text-red-300
+              {% elif run.status == 'running' %}bg-blue-900 text-blue-300
+              {% elif run.status == 'waiting' %}bg-yellow-900 text-yellow-300
+              {% else %}bg-gray-700 text-gray-300{% endif %}">
+              {{ run.get_status_display }}
+            </span>
+          </td>
+          <td class="px-4 py-3 text-gray-400 text-xs max-w-xs truncate">{{ run.input|truncatechars:60 }}</td>
+          <td class="px-4 py-3 text-gray-500 text-xs">{{ run.created_at|date:"m-d H:i" }}</td>
+          <td class="px-4 py-3 text-right">
+            <a href="{% url 'agent:detail' pk=run.id %}"
+               class="text-xs text-blue-400 hover:text-blue-300 transition-colors">View</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="px-4 py-8 text-center text-gray-500">No runs yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# Pagination #}
+  {% if page_obj.has_other_pages %}
+  <div class="flex items-center justify-center gap-2">
+    {% if page_obj.has_previous %}
+    <a href="?page={{ page_obj.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if source_filter %}&source={{ source_filter }}{% endif %}"
+       class="text-xs px-3 py-1.5 rounded border border-white/20 text-gray-400 hover:text-white transition-colors">
+      ← Prev
+    </a>
+    {% endif %}
+    <span class="text-xs text-gray-500">
+      Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+    </span>
+    {% if page_obj.has_next %}
+    <a href="?page={{ page_obj.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if source_filter %}&source={{ source_filter }}{% endif %}"
+       class="text-xs px-3 py-1.5 rounded border border-white/20 text-gray-400 hover:text-white transition-colors">
+      Next →
+    </a>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  </div>{# end #runs-table-container #}
+
+</div>
+{% endblock %}

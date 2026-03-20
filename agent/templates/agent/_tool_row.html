@@ -1,0 +1,51 @@
+<div class="rounded-xl px-5 py-4 border border-white/10 flex items-start gap-4"
+     style="background-color: #202123;">
+
+  {# Enable toggle #}
+  <div class="flex-shrink-0 pt-0.5">
+    <form method="post"
+          action="{% url 'agent:tool-toggle' name=tool.name %}"
+          hx-post="{% url 'agent:tool-toggle' name=tool.name %}"
+          hx-target="closest div.rounded-xl"
+          hx-swap="outerHTML">
+      {% csrf_token %}
+      {% if agent %}<input type="hidden" name="agent" value="{{ agent.id }}">{% endif %}
+      <button type="submit"
+              class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors {% if tool.name in agent_tools %}bg-blue-600{% else %}bg-gray-600{% endif %}"
+              title="{% if tool.name in agent_tools %}Disable{% else %}Enable{% endif %}">
+        <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform {% if tool.name in agent_tools %}translate-x-4{% else %}translate-x-1{% endif %}"></span>
+      </button>
+    </form>
+  </div>
+
+  <div class="flex-1 min-w-0">
+    <div class="flex items-center gap-2 mb-1 flex-wrap">
+      <code class="text-sm font-mono text-blue-300">{{ tool.name }}</code>
+      <span class="text-xs px-2 py-0.5 rounded-full {% if tool.approval_policy == 'auto' %}bg-green-900 text-green-300{% else %}bg-yellow-900 text-yellow-300{% endif %}">
+        {{ tool.approval_policy }}
+      </span>
+    </div>
+    <p class="text-sm text-gray-400">{{ tool.description }}</p>
+  </div>
+
+  {# Policy override dropdown — only when an agent is selected #}
+  {% if agent %}
+  <div class="flex-shrink-0">
+    <form method="post"
+          action="{% url 'agent:tool-policy' name=tool.name %}"
+          hx-post="{% url 'agent:tool-policy' name=tool.name %}"
+          hx-swap="none">
+      {% csrf_token %}
+      <input type="hidden" name="agent" value="{{ agent.id }}">
+      <select name="policy" onchange="this.form.requestSubmit()"
+              class="text-xs px-2 py-1 rounded border border-white/10 text-gray-300 focus:outline-none cursor-pointer"
+              style="background-color: #2a2b32;">
+        <option value="default" {% if current_policy == 'default' %}selected{% endif %}>— default —</option>
+        <option value="auto" {% if current_policy == 'auto' %}selected{% endif %}>Auto</option>
+        <option value="requires_approval" {% if current_policy == 'requires_approval' %}selected{% endif %}>Requires Approval</option>
+      </select>
+    </form>
+  </div>
+  {% endif %}
+
+</div>

@@ -1,0 +1,26 @@
+<div class="rounded-xl border border-white/10 p-4 space-y-3" style="background-color: #202123;">
+  <div class="flex items-center justify-between">
+    <h2 class="text-xs text-gray-400 uppercase tracking-wider">System Health</h2>
+    <span class="text-xs px-2 py-0.5 rounded-full
+      {% if overall == 'ok' %}bg-green-900 text-green-300
+      {% elif overall == 'degraded' %}bg-yellow-900 text-yellow-300
+      {% else %}bg-red-900 text-red-300{% endif %}">
+      {% if overall == 'ok' %}All systems operational
+      {% elif overall == 'degraded' %}Degraded
+      {% else %}Critical{% endif %}
+    </span>
+  </div>
+
+  <div class="space-y-2">
+    {% for check in checks %}
+    <div class="flex items-center gap-3 text-sm">
+      <span class="w-2 h-2 rounded-full flex-shrink-0
+        {% if check.status == 'ok' %}bg-green-400
+        {% elif check.status == 'warning' %}bg-yellow-400
+        {% else %}bg-red-400{% endif %}"></span>
+      <span class="text-gray-400 flex-shrink-0 w-28">{{ check.label }}</span>
+      <span class="text-gray-300 text-xs truncate">{{ check.detail }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>

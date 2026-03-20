@@ -1,0 +1,8 @@
+# Heartbeat Checklist
+
+The agent checks this file on every heartbeat. Add tasks with `- [ ]` to trigger
+autonomous action. The agent will execute unchecked items and report back.
+
+## Daily checks
+
+- [ ] Summarise any important updates in the project

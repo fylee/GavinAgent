@@ -1,0 +1,49 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Agent Skills{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-semibold text-white">Skills</h1>
+    <form method="post" action="{% url 'agent:skill-install' %}">
+      {% csrf_token %}
+      <button type="submit"
+              hx-post="{% url 'agent:skill-install' %}"
+              hx-target="#install-status"
+              hx-swap="outerHTML"
+              class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
+        Reload skills
+      </button>
+    </form>
+  </div>
+
+  <div id="install-status"></div>
+
+  {# Multi-worker warning #}
+  <div class="rounded-lg border border-yellow-700/40 bg-yellow-900/10 px-4 py-2">
+    <p class="text-yellow-400 text-xs">
+      The skill registry is in-memory per worker. Reloading via this UI updates only the current worker.
+      A full restart is required for all workers to see changes.
+    </p>
+  </div>
+
+  <p class="text-xs text-gray-500">
+    Skills are loaded from <code class="font-mono">agent/workspace/skills/</code>.
+    Each skill directory needs a <code class="font-mono">SKILL.md</code> file with YAML frontmatter.
+  </p>
+
+  <div class="space-y-3">
+    {% for item in skills_with_db %}
+    {% include "agent/_skill_row.html" with entry=item.entry db=item.db %}
+    {% empty %}
+    <p class="text-gray-500 text-sm">
+      No skills loaded. Create a directory in
+      <code class="font-mono">agent/workspace/skills/</code> with a
+      <code class="font-mono">SKILL.md</code> file, then click "Reload skills".
+    </p>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}

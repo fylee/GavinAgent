@@ -1,0 +1,42 @@
+<div id="tool-approval-{{ tool_execution.id }}"
+     hx-get="{% url 'chat:message-stream' conversation_pk=conversation.id pk=user_msg_id %}"
+     hx-trigger="every 2s"
+     hx-target="this"
+     hx-swap="outerHTML"
+     class="flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full">
+  <div class="flex-1 border-l-4 border-yellow-500 pl-4 rounded-r-xl py-3 pr-4"
+       style="background-color: #202123;">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-yellow-400">🔧</span>
+      <span class="text-sm font-medium text-yellow-300">Tool Approval Required</span>
+      <code class="text-xs font-mono text-blue-300 ml-1">{{ tool_execution.tool_name }}</code>
+    </div>
+    <pre class="text-xs text-gray-300 font-mono bg-black/30 rounded p-2 overflow-x-auto mb-3">{{ tool_execution.input|pprint }}</pre>
+    <div class="flex items-center gap-2">
+      <form method="post"
+            action="{% url 'agent:approve' tool_id=tool_execution.id %}"
+            hx-post="{% url 'agent:approve' tool_id=tool_execution.id %}"
+            hx-target="#tool-approval-{{ tool_execution.id }}"
+            hx-swap="outerHTML">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="approve">
+        <button type="submit"
+                class="text-xs px-3 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 text-white font-medium transition-colors">
+          Approve
+        </button>
+      </form>
+      <form method="post"
+            action="{% url 'agent:approve' tool_id=tool_execution.id %}"
+            hx-post="{% url 'agent:approve' tool_id=tool_execution.id %}"
+            hx-target="#tool-approval-{{ tool_execution.id }}"
+            hx-swap="outerHTML">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="reject">
+        <button type="submit"
+                class="text-xs px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-600 text-white font-medium transition-colors">
+          Reject
+        </button>
+      </form>
+    </div>
+  </div>
+</div>

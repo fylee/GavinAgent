@@ -1,0 +1,70 @@
+<div x-data="{ expanded: false }"
+     class="rounded-xl border border-white/10"
+     style="background-color: #202123;">
+
+  <div class="px-5 py-4 flex items-start gap-4">
+
+    {# Enable/disable toggle #}
+    <div class="flex-shrink-0 pt-0.5">
+      {% if db %}
+      <form method="post"
+            action="{% url 'agent:skill-toggle' name=entry.name %}"
+            hx-post="{% url 'agent:skill-toggle' name=entry.name %}"
+            hx-target="closest div.rounded-xl"
+            hx-swap="outerHTML">
+        {% csrf_token %}
+        <button type="submit"
+                class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors {% if db.enabled %}bg-blue-600{% else %}bg-gray-600{% endif %}"
+                title="{% if db.enabled %}Disable{% else %}Enable{% endif %}">
+          <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform {% if db.enabled %}translate-x-4{% else %}translate-x-1{% endif %}"></span>
+        </button>
+      </form>
+      {% else %}
+      <span class="relative inline-flex h-5 w-9 items-center rounded-full bg-gray-600 opacity-50 cursor-not-allowed"
+            title="Not registered in DB — reload skills first">
+        <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white translate-x-1"></span>
+      </span>
+      {% endif %}
+    </div>
+
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 mb-1 flex-wrap">
+        <span class="text-sm font-medium text-white">{{ entry.name }}</span>
+        {% if entry.approval_required %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-yellow-900 text-yellow-300">approval required</span>
+        {% else %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-green-900 text-green-300">auto</span>
+        {% endif %}
+        {% if entry.handler %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-blue-900 text-blue-300">has handler</span>
+        {% endif %}
+        {% if db %}
+          {% if db.enabled %}
+          <span class="text-xs px-2 py-0.5 rounded-full bg-green-900/60 text-green-400">enabled</span>
+          {% else %}
+          <span class="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">disabled</span>
+          {% endif %}
+        {% endif %}
+      </div>
+      <p class="text-sm text-gray-400">{{ entry.description }}</p>
+      <p class="text-xs text-gray-600 mt-1 font-mono">{{ entry.path }}</p>
+    </div>
+
+    <div class="flex-shrink-0 flex items-center gap-3">
+      {% if entry.instructions %}
+      <button @click="expanded = !expanded"
+              class="text-xs text-gray-400 hover:text-white transition-colors"
+              x-text="expanded ? 'Hide' : 'Instructions'"></button>
+      {% endif %}
+      <a href="{% url 'agent:skill-delete' name=entry.name %}"
+         class="text-xs text-red-400 hover:text-red-300 transition-colors">Delete</a>
+    </div>
+  </div>
+
+  {% if entry.instructions %}
+  <div x-show="expanded" class="border-t border-white/10 px-5 py-4">
+    <pre class="text-xs text-gray-300 whitespace-pre-wrap font-mono">{{ entry.instructions }}</pre>
+  </div>
+  {% endif %}
+
+</div>

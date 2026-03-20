@@ -1,0 +1,78 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Agents{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-semibold text-white">Agents</h1>
+    <a href="{% url 'agent:agent-create' %}"
+       class="text-sm px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+      + New Agent
+    </a>
+  </div>
+
+  <div class="rounded-xl border border-white/10 overflow-hidden" style="background-color: #202123;">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-white/10 text-gray-400 text-xs uppercase tracking-wider">
+          <th class="px-4 py-3 text-left">Name</th>
+          <th class="px-4 py-3 text-left">Model</th>
+          <th class="px-4 py-3 text-left">Status</th>
+          <th class="px-4 py-3 text-left">Default</th>
+          <th class="px-4 py-3 text-right">Runs</th>
+          <th class="px-4 py-3 text-left">Created</th>
+          <th class="px-4 py-3 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for agent in agents %}
+        <tr class="border-b border-white/5 hover:bg-white/5 transition-colors">
+          <td class="px-4 py-3 text-white font-medium">{{ agent.name }}</td>
+          <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ agent.model }}</td>
+          <td class="px-4 py-3">
+            {% if agent.is_active %}
+              <span class="text-xs px-2 py-0.5 rounded-full bg-green-900 text-green-300">Active</span>
+            {% else %}
+              <span class="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">Inactive</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3">
+            {% if agent.is_default %}
+              <span class="text-xs px-2 py-0.5 rounded-full bg-blue-900 text-blue-300">Default</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-right text-gray-400">{{ agent.run_count }}</td>
+          <td class="px-4 py-3 text-gray-500 text-xs">{{ agent.created_at|date:"Y-m-d" }}</td>
+          <td class="px-4 py-3 text-right">
+            <div class="flex items-center justify-end gap-3">
+              <a href="{% url 'agent:agent-edit' pk=agent.id %}"
+                 class="text-xs text-blue-400 hover:text-blue-300 transition-colors">Edit</a>
+              {% if not agent.is_default %}
+              <form method="post" action="{% url 'agent:agent-set-default' pk=agent.id %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="text-xs text-gray-400 hover:text-white transition-colors">
+                  Set Default
+                </button>
+              </form>
+              {% endif %}
+              <a href="{% url 'agent:agent-delete' pk=agent.id %}"
+                 class="text-xs text-red-400 hover:text-red-300 transition-colors">Delete</a>
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="px-4 py-8 text-center text-gray-500">
+            No agents configured.
+            <a href="{% url 'agent:agent-create' %}" class="text-blue-400 hover:text-blue-300 ml-1">Create one.</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

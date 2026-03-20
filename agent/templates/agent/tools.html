@@ -1,0 +1,85 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Agent Tools{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+
+  <h1 class="text-xl font-semibold text-white">Tools</h1>
+
+  {# Multi-worker warning #}
+  <div class="rounded-lg border border-yellow-700/40 bg-yellow-900/10 px-4 py-2">
+    <p class="text-yellow-400 text-xs">
+      Tool settings apply to the selected agent. Changes take effect on the next run.
+    </p>
+  </div>
+
+  {# Agent selector #}
+  {% if all_agents|length > 1 %}
+  <div class="flex items-center gap-3">
+    <label class="text-xs text-gray-400 uppercase tracking-wider">Agent</label>
+    <select id="agent-selector"
+            hx-get="{% url 'agent:tools' %}"
+            hx-target="body"
+            hx-push-url="true"
+            name="agent"
+            class="px-3 py-1.5 rounded-lg border border-white/10 text-white text-sm focus:outline-none"
+            style="background-color: #2a2b32;">
+      {% for a in all_agents %}
+      <option value="{{ a.id }}" {% if agent and a.id == agent.id %}selected{% endif %}>
+        {{ a.name }}{% if a.is_default %} (default){% endif %}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+
+  {# Pending approvals panel #}
+  {% if pending_approvals %}
+  <div class="rounded-xl border border-yellow-700/60 p-4 space-y-3" style="background-color: #202123;">
+    <h2 class="text-sm font-semibold text-yellow-300 uppercase tracking-wider">Pending Approvals</h2>
+    {% for te in pending_approvals %}
+    <div class="rounded-lg border border-yellow-700/40 p-3 space-y-2" style="background-color: #2a2b32;">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <code class="text-sm text-blue-300 font-mono">{{ te.tool_name }}</code>
+          <a href="{% url 'agent:detail' pk=te.run.id %}" class="text-xs text-gray-500 hover:text-gray-300">
+            {{ te.run.agent.name }} run
+          </a>
+        </div>
+        <span class="text-xs text-gray-500">{{ te.created_at|timesince }} ago</span>
+      </div>
+      <pre class="text-xs text-gray-300 font-mono bg-black/30 rounded p-2 overflow-x-auto">{{ te.input|pprint }}</pre>
+      <div class="flex items-center gap-2">
+        <form method="post" action="{% url 'agent:approve' tool_id=te.id %}">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="approve">
+          <button type="submit"
+                  class="text-xs px-3 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 text-white transition-colors">
+            Approve
+          </button>
+        </form>
+        <form method="post" action="{% url 'agent:approve' tool_id=te.id %}">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="reject">
+          <button type="submit"
+                  class="text-xs px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-600 text-white transition-colors">
+            Reject
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# Tool list #}
+  <div id="tool-list" class="space-y-2">
+    {% for tool, current_policy in tools_with_policy %}
+    {% include "agent/_tool_row.html" with tool=tool agent_tools=agent_tools tool_policies=tool_policies current_policy=current_policy agent=agent %}
+    {% empty %}
+    <p class="text-gray-500 text-sm">No tools registered.</p>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}

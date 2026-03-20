@@ -1,0 +1,51 @@
+{# Partial — swapped in-place by HTMX on toggle #}
+<div id="agent-toggle-section">
+  {% if not default_agent %}
+    <p class="text-[11px] text-yellow-500">
+      No default agent configured.
+      <a href="/agent/" class="underline hover:text-yellow-300">Set one up →</a>
+    </p>
+  {% elif conversation.active_agent %}
+    {# Agent is ON #}
+    <div class="flex items-center justify-between">
+      <div>
+        <p class="text-xs font-medium text-green-400">Agent enabled</p>
+        <p class="text-[11px] text-gray-500">{{ conversation.active_agent.name }}</p>
+      </div>
+      <form method="post" action="{% url 'chat:agent-toggle' pk=conversation.id %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="disable">
+        <button type="submit"
+                hx-post="{% url 'chat:agent-toggle' pk=conversation.id %}"
+                hx-vals='{"action": "disable"}'
+                hx-target="#agent-toggle-section"
+                hx-swap="outerHTML"
+                class="text-[11px] px-2.5 py-1 rounded-lg border border-white/20 text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
+          Disable
+        </button>
+      </form>
+    </div>
+    <p class="text-[11px] text-gray-600">Messages in this conversation are handled by the agent.</p>
+  {% else %}
+    {# Agent is OFF #}
+    <div class="flex items-center justify-between">
+      <div>
+        <p class="text-xs font-medium text-gray-400">Agent disabled</p>
+        <p class="text-[11px] text-gray-600">{{ default_agent.name }}</p>
+      </div>
+      <form method="post" action="{% url 'chat:agent-toggle' pk=conversation.id %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="enable">
+        <button type="submit"
+                hx-post="{% url 'chat:agent-toggle' pk=conversation.id %}"
+                hx-vals='{"action": "enable"}'
+                hx-target="#agent-toggle-section"
+                hx-swap="outerHTML"
+                class="text-[11px] px-2.5 py-1 rounded-lg border border-white/20 text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
+          Enable
+        </button>
+      </form>
+    </div>
+    <p class="text-[11px] text-gray-600">Enable to let the agent handle messages autonomously.</p>
+  {% endif %}
+</div>

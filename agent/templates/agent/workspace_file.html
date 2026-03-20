@@ -1,0 +1,67 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Edit {{ filename }}{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6" x-data="{ confirmRestore: false }">
+
+  <div class="flex items-center gap-4">
+    <a href="{% url 'agent:workspace' %}" class="text-gray-400 hover:text-white text-sm">← Workspace</a>
+    <h1 class="text-xl font-semibold text-white">{{ filename }}</h1>
+  </div>
+
+  {% if saved %}
+  <p class="text-green-400 text-sm">File saved.</p>
+  {% endif %}
+
+  <form method="post"
+        action="{% url 'agent:workspace-file' filename=filename %}"
+        hx-post="{% url 'agent:workspace-file' filename=filename %}"
+        hx-target="#save-status"
+        hx-swap="outerHTML"
+        class="space-y-4">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="save">
+    <textarea name="content"
+              rows="28"
+              class="w-full font-mono text-sm text-gray-100 rounded-xl px-4 py-3 border border-white/10 focus:outline-none focus:ring-2 focus:ring-white/20 resize-y"
+              style="background-color: #202123;">{{ content }}</textarea>
+    <div class="flex items-center gap-3">
+      <button type="submit"
+              class="text-sm px-4 py-2 rounded-lg border border-white/20 text-white hover:bg-white/10 transition-colors">
+        Save
+      </button>
+      {% if has_example %}
+      <button type="button"
+              @click="confirmRestore = true"
+              class="text-sm px-4 py-2 rounded-lg border border-yellow-700/60 text-yellow-400 hover:bg-yellow-900/20 transition-colors">
+        Restore Example
+      </button>
+      {% endif %}
+      <div id="save-status" class="text-sm text-gray-400"></div>
+    </div>
+  </form>
+
+  {# Restore confirmation #}
+  {% if has_example %}
+  <div x-show="confirmRestore"
+       class="rounded-xl border border-yellow-700/60 p-4 space-y-3 bg-yellow-900/10">
+    <p class="text-yellow-300 text-sm">This will overwrite the current content with the example file. Are you sure?</p>
+    <div class="flex gap-2">
+      <form method="post" action="{% url 'agent:workspace-file' filename=filename %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="restore_example">
+        <button type="submit"
+                class="text-sm px-4 py-2 rounded-lg bg-yellow-700 hover:bg-yellow-600 text-white transition-colors">
+          Yes, Restore
+        </button>
+      </form>
+      <button @click="confirmRestore = false"
+              class="text-sm px-4 py-2 rounded-lg border border-white/20 text-gray-400 hover:text-white transition-colors">
+        Cancel
+      </button>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

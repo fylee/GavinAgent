@@ -1,0 +1,78 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Agent Logs{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-8">
+
+  <h1 class="text-xl font-semibold text-white">Logs</h1>
+
+  {# Heartbeat logs #}
+  <div>
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Heartbeat History</h2>
+    <div class="space-y-2">
+      {% for log in heartbeat_logs %}
+      <div class="rounded-lg px-4 py-3 border border-white/10 flex items-start gap-4"
+           style="background-color: #202123;">
+        <span class="text-xs px-2 py-0.5 rounded-full flex-shrink-0
+          {% if log.status == 'ok' %}bg-green-900 text-green-300
+          {% elif log.status == 'acted' %}bg-blue-900 text-blue-300
+          {% else %}bg-red-900 text-red-300{% endif %}">
+          {{ log.get_status_display }}
+        </span>
+        <div class="flex-1 min-w-0">
+          <p class="text-xs text-gray-500">{{ log.triggered_at|date:"Y-m-d H:i:s" }}</p>
+          {% if log.actions_taken %}
+            <ul class="mt-1 space-y-0.5">
+              {% for action in log.actions_taken %}
+              <li class="text-xs text-gray-300">• {{ action }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+          {% if log.error_message %}
+            <p class="text-xs text-red-400 mt-1">{{ log.error_message }}</p>
+          {% endif %}
+        </div>
+      </div>
+      {% empty %}
+      <p class="text-gray-500 text-sm">No heartbeat logs yet.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Tool execution history #}
+  <div>
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Tool Executions</h2>
+    <div class="space-y-2">
+      {% for te in tool_executions %}
+      <div class="rounded-lg px-4 py-3 border border-white/10"
+           style="background-color: #202123;">
+        <div class="flex items-center gap-3 mb-1">
+          <code class="text-xs text-blue-300 font-mono">{{ te.tool_name }}</code>
+          <span class="text-xs px-2 py-0.5 rounded-full
+            {% if te.status == 'success' %}bg-green-900 text-green-300
+            {% elif te.status == 'error' %}bg-red-900 text-red-300
+            {% elif te.status == 'rejected' %}bg-orange-900 text-orange-300
+            {% elif te.status == 'pending' %}bg-yellow-900 text-yellow-300
+            {% else %}bg-gray-700 text-gray-300{% endif %}">
+            {{ te.get_status_display }}
+          </span>
+          {% if te.duration_ms %}
+            <span class="text-xs text-gray-500">{{ te.duration_ms }}ms</span>
+          {% endif %}
+          {% if te.requires_approval %}
+            <span class="text-xs text-yellow-500">requires approval</span>
+          {% endif %}
+          <span class="flex-1 text-right text-xs text-gray-600">
+            {{ te.created_at|date:"m-d H:i:s" }} · {{ te.run.agent.name }}
+          </span>
+        </div>
+        <p class="text-xs text-gray-500 font-mono truncate">{{ te.input }}</p>
+      </div>
+      {% empty %}
+      <p class="text-gray-500 text-sm">No tool executions yet.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,61 @@
+{% load i18n %}
+<div id="para-{{ para.hash }}"
+     x-data="{ editing: false, content: '' }"
+     x-init="content = $el.querySelector('template.para-content').innerHTML"
+     class="rounded-xl border border-white/10 p-4 space-y-2"
+     style="background-color: #202123;">
+
+  {# Hidden content template for Alpine init #}
+  <template class="para-content">{{ para.content }}</template>
+
+  <div x-show="!editing" class="space-y-2">
+    <p class="text-sm text-gray-200 whitespace-pre-wrap">{{ para.content }}</p>
+    <div class="flex gap-2">
+      <button @click="editing = true"
+              class="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+        Edit
+      </button>
+      <form method="post"
+            action="{% url 'agent:memory-paragraph-delete' %}"
+            hx-post="{% url 'agent:memory-paragraph-delete' %}"
+            hx-target="#para-{{ para.hash }}"
+            hx-swap="outerHTML"
+            hx-confirm="Delete this paragraph?">
+        {% csrf_token %}
+        <input type="hidden" name="hash" value="{{ para.hash }}">
+        <button type="submit"
+                class="text-xs text-red-400 hover:text-red-300 transition-colors">
+          Delete
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div x-show="editing" class="space-y-2">
+    <textarea x-model="content" rows="4"
+              class="w-full px-3 py-2 rounded-lg border border-white/10 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-white/20 resize-y"
+              style="background-color: #2a2b32;"></textarea>
+    <div class="flex gap-2">
+      <button @click="
+          const fd = new FormData();
+          fd.append('hash', '{{ para.hash }}');
+          fd.append('content', content);
+          fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+          htmx.ajax('POST', '{% url 'agent:memory-paragraph-edit' %}', {
+            target: '#para-{{ para.hash }}',
+            swap: 'outerHTML',
+            values: Object.fromEntries(fd)
+          });
+          editing = false;
+        "
+              class="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+        Save
+      </button>
+      <button @click="editing = false"
+              class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-400 hover:text-white transition-colors">
+        Cancel
+      </button>
+    </div>
+  </div>
+
+</div>

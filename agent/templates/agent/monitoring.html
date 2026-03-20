@@ -1,0 +1,262 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Monitoring{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto space-y-6">
+
+  <h1 class="text-xl font-semibold text-white">Monitoring</h1>
+
+  <div class="grid grid-cols-3 gap-6">
+
+    {# Left column 2/3 — activity + approval history #}
+    <div class="col-span-2 space-y-6">
+
+      {# Recent activity #}
+      <div x-data="{ filter: 'all' }">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Recent Activity</h2>
+          <div class="flex rounded-lg border border-white/10 overflow-hidden text-xs">
+            <button @click="filter = 'all'"
+                    :class="filter === 'all' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'"
+                    class="px-3 py-1.5 transition-colors">All</button>
+            <button @click="filter = 'agent'"
+                    :class="filter === 'agent' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'"
+                    class="px-3 py-1.5 transition-colors">Agent only</button>
+          </div>
+        </div>
+
+        <div class="space-y-1.5 max-h-96 overflow-y-auto">
+          {% for event in recent_activity %}
+          <div class="rounded-lg px-4 py-2.5 border border-white/5 flex items-start gap-3 text-sm"
+               style="background-color: #202123;"
+               {% if event.event_type == 'chat_message' %}x-show="filter === 'all'"{% endif %}>
+            <span class="flex-shrink-0 text-base">
+              {% if event.event_type == 'run' %}▶
+              {% elif event.event_type == 'tool_execution' %}🔧
+              {% elif event.event_type == 'heartbeat' %}♥
+              {% elif event.event_type == 'reembed' %}🧠
+              {% elif event.event_type == 'chat_message' %}💬
+              {% endif %}
+            </span>
+            <div class="flex-1 min-w-0">
+              {% if event.event_type == 'run' %}
+              <a href="{% url 'agent:detail' pk=event.obj.id %}" class="text-blue-400 hover:text-blue-300 text-xs">
+                {{ event.obj.agent.name }} — {{ event.obj.input|truncatechars:60 }}
+              </a>
+              <span class="text-xs px-1.5 py-0.5 rounded-full ml-1
+                {% if event.obj.status == 'completed' %}bg-green-900 text-green-300
+                {% elif event.obj.status == 'failed' %}bg-red-900 text-red-300
+                {% elif event.obj.status == 'running' %}bg-blue-900 text-blue-300
+                {% else %}bg-gray-700 text-gray-300{% endif %}">
+                {{ event.obj.get_status_display }}
+              </span>
+              {% elif event.event_type == 'tool_execution' %}
+              <span class="text-gray-300 text-xs">
+                <code class="text-blue-300">{{ event.obj.tool_name }}</code>
+                — {{ event.obj.get_status_display }}
+                {% if event.obj.duration_ms %}({{ event.obj.duration_ms }}ms){% endif %}
+              </span>
+              {% elif event.event_type == 'heartbeat' %}
+              <span class="text-gray-300 text-xs">
+                Heartbeat — {{ event.obj.get_status_display }}
+                {% if event.obj.actions_taken %}({{ event.obj.actions_taken|length }} action(s)){% endif %}
+              </span>
+              {% elif event.event_type == 'reembed' %}
+              <span class="text-gray-300 text-xs">
+                Memory re-embedded — {{ event.obj.paragraph_count }} paragraphs
+                (+{{ event.obj.records_added }} / -{{ event.obj.records_deleted }})
+              </span>
+              {% elif event.event_type == 'chat_message' %}
+              <span class="text-gray-300 text-xs">{{ event.obj.content|truncatechars:80 }}</span>
+              {% endif %}
+            </div>
+            <span class="flex-shrink-0 text-xs text-gray-600">{{ event.created_at|timesince }} ago</span>
+          </div>
+          {% empty %}
+          <p class="text-gray-500 text-sm">No activity yet.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      {# Approval history #}
+      <div>
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Approval History</h2>
+          <div class="flex gap-1 text-xs">
+            {% for val, label in '' %}{% endfor %}
+            <a href="?approval_status="
+               class="px-3 py-1 rounded {% if not approval_status_filter %}bg-white/10 text-white{% else %}text-gray-400 hover:text-white{% endif %} transition-colors">All</a>
+            <a href="?approval_status=approved"
+               class="px-3 py-1 rounded {% if approval_status_filter == 'approved' %}bg-white/10 text-white{% else %}text-gray-400 hover:text-white{% endif %} transition-colors">Approved</a>
+            <a href="?approval_status=rejected"
+               class="px-3 py-1 rounded {% if approval_status_filter == 'rejected' %}bg-white/10 text-white{% else %}text-gray-400 hover:text-white{% endif %} transition-colors">Rejected</a>
+            <a href="?approval_status=pending"
+               class="px-3 py-1 rounded {% if approval_status_filter == 'pending' %}bg-white/10 text-white{% else %}text-gray-400 hover:text-white{% endif %} transition-colors">Pending</a>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-white/10 overflow-hidden" style="background-color: #202123;">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="border-b border-white/10 text-gray-400 uppercase tracking-wider">
+                <th class="px-4 py-2 text-left">Tool</th>
+                <th class="px-4 py-2 text-left">Decision</th>
+                <th class="px-4 py-2 text-left">Agent</th>
+                <th class="px-4 py-2 text-left">Run</th>
+                <th class="px-4 py-2 text-left">When</th>
+                <th class="px-4 py-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for te in approval_page %}
+              <tr class="border-b border-white/5 {% if te.status == 'pending' %}bg-yellow-900/10{% endif %}">
+                <td class="px-4 py-2"><code class="text-blue-300">{{ te.tool_name }}</code></td>
+                <td class="px-4 py-2">
+                  <span class="px-1.5 py-0.5 rounded-full
+                    {% if te.status == 'success' %}bg-green-900 text-green-300
+                    {% elif te.status == 'rejected' %}bg-red-900 text-red-300
+                    {% elif te.status == 'pending' %}bg-yellow-900 text-yellow-300
+                    {% else %}bg-gray-700 text-gray-300{% endif %}">
+                    {{ te.get_status_display }}
+                  </span>
+                </td>
+                <td class="px-4 py-2 text-gray-400">{{ te.run.agent.name }}</td>
+                <td class="px-4 py-2">
+                  <a href="{% url 'agent:detail' pk=te.run.id %}" class="text-blue-400 hover:text-blue-300">
+                    {{ te.run.id|truncatechars:8 }}…
+                  </a>
+                </td>
+                <td class="px-4 py-2 text-gray-500">{{ te.created_at|timesince }} ago</td>
+                <td class="px-4 py-2 text-right">
+                  {% if te.status == 'pending' %}
+                  <span class="flex gap-1 justify-end">
+                    <form method="post" action="{% url 'agent:approve' tool_id=te.id %}"
+                          hx-post="{% url 'agent:approve' tool_id=te.id %}"
+                          hx-target="closest tr"
+                          hx-swap="outerHTML">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="approve">
+                      <button type="submit" class="text-green-400 hover:text-green-300">Approve</button>
+                    </form>
+                    <form method="post" action="{% url 'agent:approve' tool_id=te.id %}"
+                          hx-post="{% url 'agent:approve' tool_id=te.id %}"
+                          hx-target="closest tr"
+                          hx-swap="outerHTML">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="reject">
+                      <button type="submit" class="text-red-400 hover:text-red-300">Reject</button>
+                    </form>
+                  </span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="6" class="px-4 py-6 text-center text-gray-500">No approval history yet.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {# Pagination #}
+        {% if approval_page.has_other_pages %}
+        <div class="flex items-center justify-center gap-2 mt-3">
+          {% if approval_page.has_previous %}
+          <a href="?approval_page={{ approval_page.previous_page_number }}{% if approval_status_filter %}&approval_status={{ approval_status_filter }}{% endif %}"
+             class="text-xs px-3 py-1 rounded border border-white/20 text-gray-400 hover:text-white">← Prev</a>
+          {% endif %}
+          <span class="text-xs text-gray-500">Page {{ approval_page.number }} of {{ approval_page.paginator.num_pages }}</span>
+          {% if approval_page.has_next %}
+          <a href="?approval_page={{ approval_page.next_page_number }}{% if approval_status_filter %}&approval_status={{ approval_status_filter }}{% endif %}"
+             class="text-xs px-3 py-1 rounded border border-white/20 text-gray-400 hover:text-white">Next →</a>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+
+    </div>
+
+    {# Right column 1/3 — health + cost #}
+    <div class="col-span-1 space-y-6">
+
+      {# Health check — auto-refreshes every 30s #}
+      <div id="health-container"
+           hx-get="{% url 'agent:health' %}"
+           hx-trigger="load, every 30s"
+           hx-swap="innerHTML">
+        <p class="text-gray-500 text-xs">Loading health status…</p>
+      </div>
+
+      {# Cost today #}
+      <div class="rounded-xl border border-white/10 p-4 space-y-3" style="background-color: #202123;">
+        <h2 class="text-xs text-gray-400 uppercase tracking-wider">Cost Today</h2>
+        <div class="space-y-1 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-400">Tokens</span>
+            <span class="text-white font-medium">{{ cost_today.total_tokens|default:0 }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-400">Est. cost</span>
+            <span class="text-white font-medium">${{ cost_today.total_cost|default:"0.000000" }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-400">Calls</span>
+            <span class="text-white font-medium">{{ cost_today.count|default:0 }}</span>
+          </div>
+        </div>
+      </div>
+
+      {# Cost 30 days #}
+      <div class="rounded-xl border border-white/10 p-4 space-y-3" style="background-color: #202123;">
+        <h2 class="text-xs text-gray-400 uppercase tracking-wider">Last 30 Days</h2>
+        <div class="space-y-1 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-400">Tokens</span>
+            <span class="text-white font-medium">{{ cost_month.total_tokens|default:0 }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-400">Est. cost</span>
+            <span class="text-white font-medium">${{ cost_month.total_cost|default:"0.000000" }}</span>
+          </div>
+        </div>
+      </div>
+
+      {# By source #}
+      <div class="rounded-xl border border-white/10 p-4 space-y-3" style="background-color: #202123;">
+        <h2 class="text-xs text-gray-400 uppercase tracking-wider">Agent vs Chat (30d)</h2>
+        {% for row in cost_by_source %}
+        <div class="flex justify-between text-sm">
+          <span class="text-gray-400 capitalize">{{ row.source }}</span>
+          <span class="text-white">${{ row.cost|default:"0.00" }}</span>
+        </div>
+        {% empty %}
+        <p class="text-gray-600 text-xs">No usage data.</p>
+        {% endfor %}
+      </div>
+
+      {# By model #}
+      {% if cost_by_model %}
+      <div class="rounded-xl border border-white/10 p-4 space-y-3" style="background-color: #202123;">
+        <h2 class="text-xs text-gray-400 uppercase tracking-wider">By Model (30d)</h2>
+        {% for row in cost_by_model %}
+        <div class="space-y-0.5 text-xs">
+          <div class="flex justify-between">
+            <code class="text-blue-300">{{ row.model }}</code>
+            <span class="text-white">${{ row.cost|default:"0.00" }}</span>
+          </div>
+          <div class="flex justify-between text-gray-500">
+            <span>{{ row.calls }} calls</span>
+            <span>{{ row.tokens }} tokens</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+    </div>
+
+  </div>
+
+</div>
+{% endblock %}

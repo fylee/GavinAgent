@@ -1,0 +1,13 @@
+{% if results %}
+<div class="space-y-2 mt-2">
+  <p class="text-xs text-gray-500 uppercase tracking-wider">Search results for "{{ query }}"</p>
+  {% for result in results %}
+  <div class="rounded-lg border-l-4 border-yellow-500 px-4 py-3"
+       style="background-color: #202123;">
+    <p class="text-sm text-gray-200 whitespace-pre-wrap">{{ result.content }}</p>
+  </div>
+  {% endfor %}
+</div>
+{% elif query %}
+<p class="text-xs text-gray-500 mt-2">No results for "{{ query }}".</p>
+{% endif %}

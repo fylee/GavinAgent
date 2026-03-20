@@ -1,0 +1,45 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Delete Skill{% endblock %}
+
+{% block content %}
+<div class="max-w-lg mx-auto space-y-6">
+
+  <div class="flex items-center gap-4">
+    <a href="{% url 'agent:skills' %}" class="text-gray-400 hover:text-white text-sm">← Skills</a>
+    <h1 class="text-xl font-semibold text-white">Delete Skill</h1>
+  </div>
+
+  <div class="rounded-xl border border-red-800/60 p-6 space-y-4" style="background-color: #202123;">
+    <p class="text-white">
+      Are you sure you want to delete the skill <strong>{{ skill.name }}</strong>?
+    </p>
+
+    {% if entry %}
+    <p class="text-gray-400 text-sm">{{ entry.description }}</p>
+    {% endif %}
+
+    <div class="rounded-lg border border-yellow-700/40 bg-yellow-900/10 px-4 py-3">
+      <p class="text-yellow-300 text-sm">
+        This removes the skill from the in-memory registry and deletes the DB record.
+        Files on disk at <code class="font-mono">{{ skill.path }}</code> are <strong>not</strong> deleted.
+        Clean them up manually if needed.
+      </p>
+    </div>
+
+    <div class="flex items-center gap-3 pt-2">
+      <form method="post" action="{% url 'agent:skill-delete' name=skill.name %}">
+        {% csrf_token %}
+        <button type="submit"
+                class="px-5 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-medium transition-colors">
+          Delete Skill
+        </button>
+      </form>
+      <a href="{% url 'agent:skills' %}"
+         class="px-5 py-2 rounded-lg border border-white/20 text-gray-400 hover:text-white text-sm transition-colors">
+        Cancel
+      </a>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

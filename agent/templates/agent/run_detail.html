@@ -1,0 +1,121 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Run {{ run.id }}{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto space-y-6">
+
+  <div class="flex items-center gap-4">
+    <a href="{% url 'agent:list' %}" class="text-gray-400 hover:text-white text-sm">← Runs</a>
+    <h1 class="text-xl font-semibold text-white">Agent Run</h1>
+    <span class="text-xs px-2 py-0.5 rounded-full
+      {% if run.status == 'completed' %}bg-green-900 text-green-300
+      {% elif run.status == 'failed' %}bg-red-900 text-red-300
+      {% elif run.status == 'running' %}bg-blue-900 text-blue-300
+      {% elif run.status == 'waiting' %}bg-yellow-900 text-yellow-300
+      {% else %}bg-gray-700 text-gray-300{% endif %}">
+      {{ run.get_status_display }}
+    </span>
+  </div>
+
+  <div class="grid grid-cols-5 gap-6">
+
+    {# Left column — metadata + output #}
+    <div class="col-span-2 space-y-4">
+
+      <div class="rounded-xl border border-white/10 p-4 space-y-3" style="background-color: #202123;">
+        <h2 class="text-xs text-gray-400 uppercase tracking-wider">Details</h2>
+        <dl class="space-y-2 text-sm">
+          <div class="flex justify-between">
+            <dt class="text-gray-500">Agent</dt>
+            <dd class="text-gray-200">
+              <a href="{% url 'agent:agent-edit' pk=run.agent.id %}"
+                 class="text-blue-400 hover:text-blue-300">{{ run.agent.name }}</a>
+            </dd>
+          </div>
+          <div class="flex justify-between">
+            <dt class="text-gray-500">Source</dt>
+            <dd class="text-gray-200">{{ run.get_trigger_source_display }}</dd>
+          </div>
+          <div class="flex justify-between">
+            <dt class="text-gray-500">Created</dt>
+            <dd class="text-gray-200">{{ run.created_at|date:"Y-m-d H:i:s" }}</dd>
+          </div>
+          {% if run.started_at %}
+          <div class="flex justify-between">
+            <dt class="text-gray-500">Started</dt>
+            <dd class="text-gray-200">{{ run.started_at|date:"H:i:s" }}</dd>
+          </div>
+          {% endif %}
+          {% if run.finished_at %}
+          <div class="flex justify-between">
+            <dt class="text-gray-500">Finished</dt>
+            <dd class="text-gray-200">{{ run.finished_at|date:"H:i:s" }}</dd>
+          </div>
+          {% endif %}
+        </dl>
+      </div>
+
+      <div class="rounded-xl border border-white/10 p-4" style="background-color: #202123;">
+        <h2 class="text-xs text-gray-400 uppercase tracking-wider mb-2">Input</h2>
+        <pre class="text-sm text-gray-300 whitespace-pre-wrap font-mono">{{ run.input }}</pre>
+      </div>
+
+      {% if run.status in 'pending,running' %}
+      <form method="post" action="{% url 'agent:cancel' pk=run.id %}"
+            hx-post="{% url 'agent:cancel' pk=run.id %}"
+            hx-target="#run-status-container"
+            hx-swap="innerHTML">
+        {% csrf_token %}
+        <button type="submit"
+                class="w-full py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-medium transition-colors">
+          Cancel Run
+        </button>
+      </form>
+      {% endif %}
+
+      {# Output (completed) #}
+      {% if run.status == 'completed' and run.output %}
+      <div class="rounded-xl border border-white/10 p-4" style="background-color: #202123;">
+        <h2 class="text-xs text-gray-400 uppercase tracking-wider mb-2">Output</h2>
+        {{ run.output|json_script:"run-output-data" }}
+        <div id="output-md" class="text-sm text-gray-200"></div>
+        <script>
+          (function() {
+            var raw = JSON.parse(document.getElementById('run-output-data').textContent);
+            if (typeof marked !== 'undefined') {
+              document.getElementById('output-md').innerHTML = marked.parse(raw);
+            } else {
+              document.getElementById('output-md').innerText = raw;
+            }
+          })();
+        </script>
+      </div>
+      {% endif %}
+
+      {# Error #}
+      {% if run.status == 'failed' %}
+      <div class="rounded-xl border border-red-700/60 p-4 bg-red-900/10">
+        <h2 class="text-xs text-red-400 uppercase tracking-wider mb-2">Error</h2>
+        <p class="text-sm text-red-300">{{ run.error|default:"Unknown error occurred." }}</p>
+      </div>
+      {% endif %}
+
+    </div>
+
+    {# Right column — tool execution trace + status polling #}
+    <div class="col-span-3">
+      <div id="run-status-container"
+           {% if run.status == 'pending' or run.status == 'running' or run.status == 'waiting' %}
+           hx-get="{% url 'agent:status' pk=run.id %}"
+           hx-trigger="every 2s"
+           hx-swap="innerHTML"
+           {% endif %}>
+        {% include "agent/_run_status.html" %}
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+{% endblock %}
