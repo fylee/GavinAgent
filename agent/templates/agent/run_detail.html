@@ -7,7 +7,7 @@
   <div class="flex items-center gap-4">
     <a href="{% url 'agent:list' %}" class="text-gray-400 hover:text-white text-sm">← Runs</a>
     <h1 class="text-xl font-semibold text-white">Agent Run</h1>
-    <span class="text-xs px-2 py-0.5 rounded-full
+    <span id="run-status-badge" class="text-xs px-2 py-0.5 rounded-full
       {% if run.status == 'completed' %}bg-green-900 text-green-300
       {% elif run.status == 'failed' %}bg-red-900 text-red-300
       {% elif run.status == 'running' %}bg-blue-900 text-blue-300

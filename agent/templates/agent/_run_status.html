@@ -1,3 +1,15 @@
+{# OOB update for the status badge in the page header #}
+<span id="run-status-badge"
+      hx-swap-oob="true"
+      class="text-xs px-2 py-0.5 rounded-full
+        {% if run.status == 'completed' %}bg-green-900 text-green-300
+        {% elif run.status == 'failed' %}bg-red-900 text-red-300
+        {% elif run.status == 'running' %}bg-blue-900 text-blue-300
+        {% elif run.status == 'waiting' %}bg-yellow-900 text-yellow-300
+        {% else %}bg-gray-700 text-gray-300{% endif %}">
+  {{ run.get_status_display }}
+</span>
+
 <div class="space-y-4">
 
   {# Status indicator for active states #}
