@@ -67,6 +67,19 @@ class ChartTool(BaseTool):
             import matplotlib
             matplotlib.use("Agg")  # non-interactive backend
             import matplotlib.pyplot as plt
+            import matplotlib.font_manager as fm
+
+            # Find a CJK-compatible font
+            _CJK_CANDIDATES = [
+                "PingFang SC", "PingFang TC", "Heiti TC", "STHeiti",
+                "Arial Unicode MS", "Noto Sans CJK SC", "Noto Sans SC",
+                "WenQuanYi Micro Hei", "Microsoft JhengHei",
+            ]
+            _available = {f.name for f in fm.fontManager.ttflist}
+            _cjk_font = next((f for f in _CJK_CANDIDATES if f in _available), None)
+            if _cjk_font:
+                plt.rcParams["font.family"] = _cjk_font
+            plt.rcParams["axes.unicode_minus"] = False
 
             fig, ax = plt.subplots(figsize=(8, 5))
             fig.patch.set_facecolor("#1e1e2e")
