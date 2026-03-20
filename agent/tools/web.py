@@ -50,7 +50,7 @@ class WebReadTool(BaseTool):
             resp.raise_for_status()
             content = resp.text
             if len(content) > max_chars:
-                content = content[:max_chars] + "\n\n...[truncated]"
+                content = content[:max_chars] + "\n\n...[content truncated at limit — do not re-read this URL]"
             return ToolResult(
                 output={"url": url, "content": content},
                 duration_ms=int((time.monotonic() - start) * 1000),
