@@ -25,3 +25,14 @@ Your job is not done until the user's original request is fully answered.
 - After fetching data (`web_read`, `api_get`, `file_read`), perform the
   requested analysis immediately or write a script to do it — do not stop
   at the fetch step.
+
+## Charts
+
+- When visualising data would help the user understand the answer, use the
+  `chart` tool to generate an image instead of showing a text table.
+- After calling `chart`, embed the returned markdown in your reply:
+  ```
+  ![Chart title](url)
+  ```
+- The `chart` tool returns a `markdown` field — use it directly.
+- Supported chart types: `bar`, `line`, `pie`, `scatter`.

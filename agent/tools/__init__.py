@@ -1,20 +1,10 @@
 from agent.tools.base import BaseTool, ToolResult, ApprovalPolicy, ToolTimeoutError
-from agent.tools.file import FileReadTool, FileWriteTool
-from agent.tools.shell import ShellTool
-from agent.tools.api import ApiGetTool, ApiPostTool
-from agent.tools.web import WebReadTool
 
 __all__ = [
     "BaseTool",
     "ToolResult",
     "ApprovalPolicy",
     "ToolTimeoutError",
-    "FileReadTool",
-    "FileWriteTool",
-    "ShellTool",
-    "ApiGetTool",
-    "ApiPostTool",
-    "WebReadTool",
 ]
 
 # Registry: name -> tool instance
@@ -35,14 +25,18 @@ def all_tools() -> dict[str, "BaseTool"]:
 
 
 def _init_registry() -> None:
-    _register(
-        FileReadTool(),
-        FileWriteTool(),
-        ShellTool(),
-        ApiGetTool(),
-        ApiPostTool(),
-        WebReadTool(),
-    )
+    import importlib
+    import inspect
+    from pathlib import Path
+
+    tools_dir = Path(__file__).parent
+    for path in sorted(tools_dir.glob("*.py")):
+        if path.stem in ("__init__", "base"):
+            continue
+        module = importlib.import_module(f"agent.tools.{path.stem}")
+        for _, obj in inspect.getmembers(module, inspect.isclass):
+            if issubclass(obj, BaseTool) and obj is not BaseTool and obj.__module__ == module.__name__:
+                _register(obj())
 
 
 _init_registry()

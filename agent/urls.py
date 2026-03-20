@@ -53,6 +53,9 @@ urlpatterns = [
     path("workspace/", views.WorkspaceFileListView.as_view(), name="workspace"),
     path("workspace/<str:filename>/", views.WorkspaceFileEditView.as_view(), name="workspace-file"),
 
+    # Workspace file serving (charts, images)
+    path("workspace-file/<str:filename>", views.WorkspaceFileServeView.as_view(), name="workspace-file"),
+
     # MCP Servers
     path("mcp/", views.MCPServerListView.as_view(), name="mcp-list"),
     path("mcp/add/", views.MCPServerAddView.as_view(), name="mcp-add"),

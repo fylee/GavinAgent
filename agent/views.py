@@ -998,6 +998,34 @@ class WorkspaceFileEditView(View):
         })
 
 
+# ── Workspace file serving ────────────────────────────────────────────────────
+
+ALLOWED_WORKSPACE_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".svg"}
+
+
+class WorkspaceFileServeView(View):
+    """Serve generated image files (e.g. charts) from the agent workspace."""
+
+    def get(self, request: HttpRequest, filename: str) -> HttpResponse:
+        from django.http import FileResponse
+        import mimetypes
+
+        # Reject path traversal
+        if "/" in filename or "\\" in filename or ".." in filename:
+            return HttpResponse("Invalid filename.", status=400)
+
+        suffix = Path(filename).suffix.lower()
+        if suffix not in ALLOWED_WORKSPACE_IMAGE_EXTENSIONS:
+            return HttpResponse("File type not allowed.", status=403)
+
+        path = Path(settings.AGENT_WORKSPACE_DIR) / filename
+        if not path.exists():
+            return HttpResponse("File not found.", status=404)
+
+        content_type, _ = mimetypes.guess_type(filename)
+        return FileResponse(path.open("rb"), content_type=content_type or "application/octet-stream")
+
+
 # ── MCP Server Management ─────────────────────────────────────────────────────
 
 
