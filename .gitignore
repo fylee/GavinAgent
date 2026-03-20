@@ -38,9 +38,7 @@ Thumbs.db
 htmlcov/
 .pytest_cache/
 
-# Workspace runtime files (keep examples, ignore live configs and outputs)
-agent/workspace/AGENTS.md
-agent/workspace/SOUL.md
+# Workspace runtime files (keep examples and configs, ignore outputs)
 agent/workspace/HEARTBEAT.md
 agent/workspace/memory/
 agent/workspace/skills/
