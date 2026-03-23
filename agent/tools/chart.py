@@ -81,6 +81,9 @@ class ChartTool(BaseTool):
                 plt.rcParams["font.family"] = _cjk_font
             plt.rcParams["axes.unicode_minus"] = False
 
+            # Coerce all labels to str to prevent matplotlib from failing on
+            # non-string values (spaces, punctuation, numbers, etc.)
+            labels = [str(lb) for lb in labels]
             n_labels = len(labels)
             fig_width = max(8, n_labels * 0.5)
             fig, ax = plt.subplots(figsize=(fig_width, 5))

@@ -11,7 +11,7 @@ class AgentState(TypedDict):
     input: str
     messages: Annotated[list[dict], operator.add]
     pending_tool_calls: list[dict]   # tool calls waiting to be executed
-    tool_results: Annotated[list[dict], operator.add]
+    tool_results: list[dict]  # results for the CURRENT round only; replaced each round
     # The assistant message that made the last round of tool_calls.
     # Must be injected before tool results when calling the LLM again.
     assistant_tool_call_message: dict | None
@@ -19,4 +19,5 @@ class AgentState(TypedDict):
     waiting_for_approval: bool
     tool_call_rounds: int  # incremented each time execute_tools completes
     visited_urls: list[str]  # URLs already fetched via web_read
+    failed_tool_signatures: list[str]  # "tool_name|arg_hash" combos that already errored
     error: str | None

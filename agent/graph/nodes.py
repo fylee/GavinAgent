@@ -415,6 +415,7 @@ def check_approval(state: AgentState) -> dict:
             "pending_tool_calls": needs_approval,
             "tool_results": [],
             "assistant_tool_call_message": state.get("assistant_tool_call_message"),
+            "failed_tool_signatures": state.get("failed_tool_signatures") or [],
         }
         run.save(update_fields=["status", "graph_state"])
         return {
@@ -434,9 +435,12 @@ def execute_tools(state: AgentState) -> dict:
     from agent.tools.base import ToolTimeoutError
     from agent.models import AgentRun, ToolExecution
 
+    import hashlib as _hashlib
+
     pending = state.get("pending_tool_calls", [])
     tool_results = []
     visited_urls = list(state.get("visited_urls") or [])
+    failed_sigs = list(state.get("failed_tool_signatures") or [])
 
     for tc in pending:
         tool_name = tc["name"]
@@ -453,6 +457,16 @@ def execute_tools(state: AgentState) -> dict:
                 })
                 continue
             visited_urls.append(url)
+
+        # Block retrying a tool call that already failed with the same arguments
+        sig = f"{tool_name}|{_hashlib.md5(str(sorted(args.items())).encode()).hexdigest()}"
+        if sig in failed_sigs:
+            tc_id = tc["id"]
+            tool_results.append({
+                "tool_call_id": tc_id,
+                "result": {"error": f"Tool '{tool_name}' already failed with these arguments. Do not retry — use a different approach or report the error."},
+            })
+            continue
         tc_id = tc["id"]
 
         te_id = tc.get("tool_execution_id")
@@ -531,6 +545,8 @@ def execute_tools(state: AgentState) -> dict:
                     te.save(update_fields=["status", "output"])
 
         tool_results.append({"tool_call_id": tc_id, "result": result})
+        if result.get("error"):
+            failed_sigs.append(sig)
 
     rounds = state.get("tool_call_rounds", 0) + 1
     return {
@@ -538,6 +554,7 @@ def execute_tools(state: AgentState) -> dict:
         "pending_tool_calls": [],
         "tool_call_rounds": rounds,
         "visited_urls": visited_urls,
+        "failed_tool_signatures": failed_sigs,
     }
 
 
