@@ -247,15 +247,17 @@ def call_llm(state: AgentState) -> dict:
 
     # When tool results exist, the preceding assistant message with tool_calls must
     # appear first — otherwise the API rejects the request.
-    # Only include results whose tool_call_id appears in the current assistant
-    # message — previous rounds' results have IDs from a different assistant
-    # message and would cause an API error.
+    # Only inject when EVERY tool_call_id in the assistant message has a matching
+    # result — a partial match would cause an API error ("tool_call_ids did not have
+    # response messages").  Stale state from a prior round is silently skipped.
     tool_results = state.get("tool_results", [])
     assistant_tool_msg = state.get("assistant_tool_call_message")
     if tool_results and assistant_tool_msg:
-        valid_ids = {tc["id"] for tc in assistant_tool_msg.get("tool_calls", [])}
-        current_results = [tr for tr in tool_results if tr["tool_call_id"] in valid_ids]
-        if current_results:
+        required_ids = {tc["id"] for tc in assistant_tool_msg.get("tool_calls", [])}
+        result_ids = {tr["tool_call_id"] for tr in tool_results}
+        if required_ids and required_ids.issubset(result_ids):
+            # All tool calls have results — safe to inject.
+            current_results = [tr for tr in tool_results if tr["tool_call_id"] in required_ids]
             messages.append(assistant_tool_msg)
             for tr in current_results:
                 messages.append({
@@ -263,6 +265,12 @@ def call_llm(state: AgentState) -> dict:
                     "tool_call_id": tr["tool_call_id"],
                     "content": json.dumps(tr["result"]),
                 })
+        else:
+            logger.warning(
+                "assemble_context: skipping stale assistant_tool_call_message — "
+                "missing results for ids: %s",
+                required_ids - result_ids,
+            )
 
     # Build tool schemas — filtered to only tools enabled on this agent
     from agent.models import Agent as AgentModel
