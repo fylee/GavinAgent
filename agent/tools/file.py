@@ -78,6 +78,11 @@ class FileWriteTool(BaseTool):
         "required": ["path", "content"],
     }
 
+    def requires_approval_for(self, arguments: dict) -> bool:
+        """Require manual approval when writing a workflow YAML file."""
+        path = arguments.get("path", "")
+        return path.startswith("workflows/") and path.endswith((".yml", ".yaml"))
+
     def execute(self, path: str, content: str, **kwargs: Any) -> ToolResult:
         start = time.monotonic()
         try:

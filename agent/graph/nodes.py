@@ -363,7 +363,11 @@ def check_approval(state: AgentState) -> dict:
         tool_name = tc["name"]
         tool = get_tool(tool_name)
         if tool is not None:
-            requires = tool.approval_policy == ApprovalPolicy.REQUIRES_APPROVAL
+            # Allow per-call approval logic (e.g. file_write only requires approval for workflows/)
+            if hasattr(tool, "requires_approval_for"):
+                requires = tool.requires_approval_for(tc.get("arguments", {}))
+            else:
+                requires = tool.approval_policy == ApprovalPolicy.REQUIRES_APPROVAL
         else:
             # Check MCP registry
             try:

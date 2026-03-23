@@ -7,11 +7,30 @@
   <div class="flex-1 border-l-4 border-yellow-500 pl-4 rounded-r-xl py-3 pr-4"
        style="background-color: #202123;">
     <div class="flex items-center gap-2 mb-2">
-      <span class="text-yellow-400">🔧</span>
-      <span class="text-sm font-medium text-yellow-300">Tool Approval Required</span>
+      <span class="text-yellow-400">
+        {% if tool_execution.tool_name == "file_write" and tool_execution.input.path %}
+          📅
+        {% else %}
+          🔧
+        {% endif %}
+      </span>
+      <span class="text-sm font-medium text-yellow-300">
+        {% if tool_execution.tool_name == "file_write" and tool_execution.input.path %}
+          Approve new workflow schedule
+        {% else %}
+          Approval required
+        {% endif %}
+      </span>
       <code class="text-xs font-mono text-blue-300 ml-1">{{ tool_execution.tool_name }}</code>
+      {% if tool_execution.input.path %}
+      <code class="text-xs font-mono text-gray-400">{{ tool_execution.input.path }}</code>
+      {% endif %}
     </div>
+    {% if tool_execution.tool_name == "file_write" and tool_execution.input.content %}
+    <pre class="text-xs text-gray-300 font-mono bg-black/30 rounded p-2 overflow-x-auto mb-3 max-h-64">{{ tool_execution.input.content }}</pre>
+    {% else %}
     <pre class="text-xs text-gray-300 font-mono bg-black/30 rounded p-2 overflow-x-auto mb-3">{{ tool_execution.input|pprint }}</pre>
+    {% endif %}
     <div class="flex items-center gap-2">
       <form method="post"
             action="{% url 'agent:approve' tool_id=tool_execution.id %}"
@@ -24,7 +43,7 @@
         <input type="hidden" name="user_msg_id" value="{{ user_msg_id }}">
         <button type="submit"
                 class="text-xs px-3 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 text-white font-medium transition-colors">
-          Approve
+          ✓ Approve
         </button>
       </form>
       <form method="post"
@@ -38,7 +57,7 @@
         <input type="hidden" name="user_msg_id" value="{{ user_msg_id }}">
         <button type="submit"
                 class="text-xs px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-600 text-white font-medium transition-colors">
-          Reject
+          ✗ Reject
         </button>
       </form>
     </div>
