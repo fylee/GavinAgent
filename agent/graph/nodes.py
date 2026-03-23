@@ -214,11 +214,15 @@ def call_llm(state: AgentState) -> dict:
             "llm error:",
             "i currently cannot",
             "i can't execute",
+            "i can't create",
             "i am unable",
             "i'm unable",
             "since i can't",
             "currently, i'm unable",
             "i cannot execute any further",
+            "unfortunately, i'm unable",
+            "unfortunately, i cannot",
+            "i apologize",
         )
         history = [
             {"role": m["role"], "content": m["content"]}
@@ -228,6 +232,11 @@ def call_llm(state: AgentState) -> dict:
                 and any((m["content"] or "").lower().strip().startswith(p) for p in _error_prefixes)
             )
         ]
+        # Only keep the last AGENT_HISTORY_WINDOW turns (default 10 messages = ~5 exchanges)
+        # to prevent poisoned or irrelevant old history from confusing the agent.
+        history_window = getattr(settings, "AGENT_HISTORY_WINDOW", 10)
+        if len(history) > history_window:
+            history = history[-history_window:]
         history = _truncate_history(history, settings.AGENT_CONTEXT_BUDGET_TOKENS, model)
         messages.extend(history)
     else:

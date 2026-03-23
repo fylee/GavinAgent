@@ -117,6 +117,9 @@ AGENT_SKILL_SIMILARITY_THRESHOLD = config(
 # Maximum tool-call rounds per agent run before force-concluding
 AGENT_MAX_TOOL_CALL_ROUNDS = config("AGENT_MAX_TOOL_CALL_ROUNDS", default=20, cast=int)
 
+# Number of recent chat messages to include as context (filters old/poisoned history)
+AGENT_HISTORY_WINDOW = config("AGENT_HISTORY_WINDOW", default=10, cast=int)
+
 # Heartbeat interval (minutes)
 AGENT_HEARTBEAT_INTERVAL_MINUTES = config(
     "AGENT_HEARTBEAT_INTERVAL_MINUTES", default=30, cast=int
