@@ -26,6 +26,11 @@
       <span id="toggle-{{ workflow.pk }}">
         {% include "agent/_workflow_toggle.html" %}
       </span>
+      <button hx-post="{% url 'agent:workflow-delete' workflow.pk %}"
+              hx-confirm="Delete workflow '{{ workflow.name }}'? This also removes the YAML file from disk."
+              class="text-xs px-3 py-1.5 rounded-lg border border-red-900 text-red-400 hover:bg-red-900/40 transition-colors">
+        Delete
+      </button>
     </div>
   </div>
 

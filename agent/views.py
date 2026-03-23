@@ -1471,3 +1471,34 @@ steps:
             return redirect("agent:workflow-detail", pk=workflow.pk)
         return redirect("agent:workflow-list")
 
+
+class WorkflowDeleteView(View):
+    """POST /agent/workflows/<pk>/delete/ — delete workflow from DB and filesystem."""
+
+    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
+        from django_celery_beat.models import PeriodicTask
+
+        workflow = get_object_or_404(Workflow, pk=pk)
+        name = workflow.name
+
+        # Remove Celery Beat task
+        if workflow.celery_beat_id:
+            PeriodicTask.objects.filter(pk=workflow.celery_beat_id).delete()
+
+        # Remove workflow YAML file from disk
+        yml_path = Path(settings.AGENT_WORKSPACE_DIR) / "workflows" / Path(workflow.filename).name
+        try:
+            if yml_path.exists():
+                yml_path.unlink()
+        except Exception as exc:
+            logger.warning("WorkflowDeleteView: could not remove file %s: %s", yml_path, exc)
+
+        workflow.delete()
+        logger.info("Workflow '%s' deleted", name)
+
+        if request.htmx:
+            response = HttpResponse(status=204)
+            response["HX-Redirect"] = "/agent/workflows/"
+            return response
+        return redirect("agent:workflow-list")
+

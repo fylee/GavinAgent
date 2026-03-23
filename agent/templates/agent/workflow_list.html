@@ -64,11 +64,18 @@
             {% include "agent/_workflow_toggle.html" with workflow=wf %}
           </td>
           <td class="px-4 py-3">
-            <button hx-post="{% url 'agent:workflow-run-now' wf.pk %}"
-                    hx-swap="none"
-                    class="text-xs px-2 py-1 rounded border border-white/20 text-gray-400 hover:bg-white/10 transition-colors">
-              Run now
-            </button>
+            <div class="flex items-center gap-2">
+              <button hx-post="{% url 'agent:workflow-run-now' wf.pk %}"
+                      hx-swap="none"
+                      class="text-xs px-2 py-1 rounded border border-white/20 text-gray-400 hover:bg-white/10 transition-colors">
+                Run now
+              </button>
+              <button hx-post="{% url 'agent:workflow-delete' wf.pk %}"
+                      hx-confirm="Delete workflow '{{ wf.name }}'? This also removes the YAML file from disk."
+                      class="text-xs px-2 py-1 rounded border border-red-900 text-red-400 hover:bg-red-900/40 transition-colors">
+                Delete
+              </button>
+            </div>
           </td>
         </tr>
         {% endfor %}

@@ -64,6 +64,7 @@ urlpatterns = [
     path("workflows/<uuid:pk>/toggle/", views.WorkflowToggleView.as_view(), name="workflow-toggle"),
     path("workflows/<uuid:pk>/run-now/", views.WorkflowRunNowView.as_view(), name="workflow-run-now"),
     path("workflows/<uuid:pk>/save/", views.WorkflowSaveView.as_view(), name="workflow-save"),
+    path("workflows/<uuid:pk>/delete/", views.WorkflowDeleteView.as_view(), name="workflow-delete"),
 
     # MCP Servers
     path("mcp/", views.MCPServerListView.as_view(), name="mcp-list"),
