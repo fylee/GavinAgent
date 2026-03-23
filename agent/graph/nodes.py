@@ -204,8 +204,24 @@ def call_llm(state: AgentState) -> dict:
                     "content": json.dumps(tr["result"]),
                 })
 
-    # Build tool schemas — built-ins + skills + MCP
-    tools_schema = [t.to_llm_schema() for t in all_tools().values()]
+    # Build tool schemas — filtered to only tools enabled on this agent
+    from agent.models import Agent as AgentModel
+    try:
+        agent_obj = AgentModel.objects.get(pk=state["agent_id"])
+        enabled_tools: list[str] = agent_obj.tools or []
+    except AgentModel.DoesNotExist:
+        enabled_tools = []
+
+    all_builtin = all_tools()
+    if enabled_tools:
+        tools_schema = [
+            t.to_llm_schema()
+            for name, t in all_builtin.items()
+            if name in enabled_tools
+        ]
+    else:
+        tools_schema = []
+
     tools_schema.extend(skill_registry.to_llm_tools())
     try:
         from agent.mcp.registry import get_registry as get_mcp_registry
