@@ -1,8 +1,0 @@
-name: joke-scheduler
-trigger:
-  cron: '*/1 * * * *'
-  timezone: Asia/Taipei
-steps:
-  - name: tell-joke
-    prompt: >
-      Tell a humorous joke.
