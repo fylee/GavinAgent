@@ -16,13 +16,12 @@
   <div class="flex-1 min-w-0 pt-0.5">
     {% if message.metadata.source == "workflow" %}
     <div class="flex items-center gap-2 mb-1.5">
-      <a href="/agent/workflows/{{ message.metadata.workflow_id }}/"
-         class="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300 hover:bg-indigo-900 transition-colors">
+      <span class="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
         Scheduled output · {{ message.metadata.workflow_name }}
-      </a>
+      </span>
       <span class="text-[11px] text-gray-500">{{ message.created_at|date:"Y-m-d H:i" }}</span>
     </div>
     {% endif %}
