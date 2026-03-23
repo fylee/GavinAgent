@@ -252,21 +252,33 @@ class MessageStreamView(View):
 
 
 class WorkflowOutputView(SidebarMixin, View):
-    """Read-only conversation-style view showing all output messages for a single workflow."""
+    """Conversation-style view showing output messages for a single workflow, with inline edit panel."""
 
     template_name = "chat/workflow_output.html"
 
     def get(self, request: HttpRequest, pk: str) -> HttpResponse:
+        import yaml as _yaml
+        from pathlib import Path
+        from django.conf import settings
         from agent.models import Workflow
+
         workflow = get_object_or_404(Workflow, pk=pk)
         output_messages = (
             Message.objects.filter(metadata__workflow_id=str(pk))
             .order_by("created_at")
         )
+
+        yml_path = Path(settings.AGENT_WORKSPACE_DIR) / "workflows" / Path(workflow.filename).name
+        if yml_path.exists():
+            workflow_yaml = yml_path.read_text(encoding="utf-8")
+        else:
+            workflow_yaml = _yaml.dump(workflow.definition, allow_unicode=True, default_flow_style=False)
+
         ctx = {
             "workflow": workflow,
             "output_messages": output_messages,
             "current_workflow_id": str(pk),
+            "workflow_yaml": workflow_yaml,
         }
         ctx.update(self.get_sidebar_context())
         return render(request, self.template_name, ctx)

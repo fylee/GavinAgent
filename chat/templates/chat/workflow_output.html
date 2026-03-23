@@ -14,9 +14,90 @@
   </div>
   <span class="text-xs text-gray-500 font-mono flex-shrink-0">{{ workflow.schedule_display }}</span>
 </div>
+<div class="flex items-center gap-2 flex-shrink-0">
+  {# Toggle enabled/disabled #}
+  <form hx-post="/agent/workflows/{{ workflow.pk }}/toggle/"
+        hx-target="#wf-toggle-btn"
+        hx-swap="outerHTML"
+        hx-on::after-request="if(event.detail.successful){ window.location.reload() }">
+    {% csrf_token %}
+    <span id="wf-toggle-btn">
+      {% if workflow.enabled %}
+      <button type="submit"
+              class="text-xs px-2.5 py-1 rounded bg-green-900/50 text-green-400 hover:bg-green-900 transition-colors"
+              title="Click to disable">
+        ● Enabled
+      </button>
+      {% else %}
+      <button type="submit"
+              class="text-xs px-2.5 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors"
+              title="Click to enable">
+        ○ Disabled
+      </button>
+      {% endif %}
+    </span>
+  </form>
+  {# Run now #}
+  <form hx-post="/agent/workflows/{{ workflow.pk }}/run-now/"
+        hx-target="#wf-run-status"
+        hx-swap="innerHTML">
+    {% csrf_token %}
+    <button type="submit"
+            class="text-xs px-2.5 py-1 rounded bg-indigo-800/60 text-indigo-300 hover:bg-indigo-800 transition-colors">
+      ▶ Run now
+    </button>
+  </form>
+  <span id="wf-run-status" class="text-xs"></span>
+  {# Edit YAML toggle #}
+  <button onclick="document.getElementById('wf-edit-panel').classList.toggle('hidden')"
+          class="text-xs px-2.5 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+    ✎ Edit
+  </button>
+</div>
 {% endblock %}
 
 {% block chat_content %}
+
+{# ── Inline YAML edit panel (hidden by default) ── #}
+<div id="wf-edit-panel" class="hidden flex-shrink-0 border-b border-white/10 bg-gray-900/60 px-4 py-3">
+  <form hx-post="/agent/workflows/{{ workflow.pk }}/save/"
+        hx-target="#wf-save-status"
+        hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful){ window.location.reload() }">
+    {% csrf_token %}
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-xs font-medium text-gray-400">Edit workflow YAML</span>
+      <div class="flex items-center gap-3">
+        <span id="wf-save-status" class="text-xs"></span>
+        <button type="submit"
+                class="text-xs px-3 py-1 rounded bg-indigo-700 text-white hover:bg-indigo-600 transition-colors">
+          Save &amp; reload
+        </button>
+        <button type="button"
+                onclick="document.getElementById('wf-edit-panel').classList.add('hidden')"
+                class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors">
+          Cancel
+        </button>
+      </div>
+    </div>
+    <textarea name="yaml_content"
+              class="w-full h-64 bg-gray-950 text-green-300 font-mono text-xs rounded border border-white/10 p-3 resize-y focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              spellcheck="false">{{ workflow_yaml }}</textarea>
+  </form>
+  {# Delete workflow #}
+  <div class="mt-2 pt-2 border-t border-white/5 flex justify-end">
+    <form hx-post="/agent/workflows/{{ workflow.pk }}/delete/"
+          hx-confirm="Delete workflow '{{ workflow.name }}'? This cannot be undone."
+          hx-on::after-request="window.location.href='/chat/'">
+      {% csrf_token %}
+      <button type="submit"
+              class="text-xs px-2.5 py-1 rounded bg-red-900/40 text-red-400 hover:bg-red-900/70 transition-colors">
+        🗑 Delete workflow
+      </button>
+    </form>
+  </div>
+</div>
+
 <div class="flex flex-col flex-1 min-h-0 overflow-hidden">
   <div id="message-list"
        class="flex-1 overflow-y-auto py-6 space-y-4 min-h-0">
