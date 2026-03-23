@@ -1288,6 +1288,7 @@ class WorkflowDetailView(View):
 
     def get(self, request: HttpRequest, pk: str) -> HttpResponse:
         import yaml as _yaml
+        from chat.models import Message as ChatMessage
         workflow = get_object_or_404(Workflow, pk=pk)
         runs = (
             AgentRun.objects.filter(workflow=workflow)
@@ -1301,10 +1302,17 @@ class WorkflowDetailView(View):
             workflow_yaml = yml_path.read_text(encoding="utf-8")
         else:
             workflow_yaml = _yaml.dump(workflow.definition, allow_unicode=True, default_flow_style=False)
+        # Output messages delivered by this workflow
+        output_messages = (
+            ChatMessage.objects.filter(metadata__workflow_id=str(workflow.pk))
+            .select_related("conversation")
+            .order_by("-created_at")[:100]
+        )
         return render(request, self.template_name, {
             "workflow": workflow,
             "runs": runs,
             "workflow_yaml": workflow_yaml,
+            "output_messages": output_messages,
         })
 
 

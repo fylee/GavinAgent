@@ -28,14 +28,22 @@ class SidebarMixin:
         yesterday = today - timedelta(days=1)
         week_ago = today - timedelta(days=7)
 
-        groups = [
-            ("Today", [c for c in conversations if c.updated_at.date() == today]),
-            ("Yesterday", [c for c in conversations if c.updated_at.date() == yesterday]),
+        # Separate system workflow inbox from regular conversations
+        scheduled = [c for c in conversations if c.metadata.get("workflow_inbox")]
+        regular = [c for c in conversations if not c.metadata.get("workflow_inbox")]
+
+        groups = []
+        if scheduled:
+            groups.append(("Scheduled", scheduled))
+
+        groups += [
+            ("Today", [c for c in regular if c.updated_at.date() == today]),
+            ("Yesterday", [c for c in regular if c.updated_at.date() == yesterday]),
             (
                 "Previous 7 days",
-                [c for c in conversations if week_ago < c.updated_at.date() < yesterday],
+                [c for c in regular if week_ago < c.updated_at.date() < yesterday],
             ),
-            ("Older", [c for c in conversations if c.updated_at.date() <= week_ago]),
+            ("Older", [c for c in regular if c.updated_at.date() <= week_ago]),
         ]
         return {
             "conversation_groups": [(label, items) for label, items in groups if items],

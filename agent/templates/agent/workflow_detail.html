@@ -75,6 +75,38 @@
     {% endfor %}
   </div>
 
+  {# Output messages delivered by this workflow #}
+  <div class="space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="text-sm font-medium text-gray-300">
+        Output
+        {% if output_messages %}
+        <span class="ml-1.5 text-xs text-gray-500">({{ output_messages|length }})</span>
+        {% endif %}
+      </h2>
+    </div>
+    {% if output_messages %}
+    <div class="space-y-3">
+      {% for msg in output_messages %}
+      <div class="rounded-lg border border-white/10 p-4">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs text-gray-500">{{ msg.created_at|date:"Y-m-d H:i" }}</span>
+          {% if msg.conversation_id %}
+          <a href="{% url 'chat:detail' pk=msg.conversation_id %}#msg-{{ msg.id }}"
+             class="text-xs text-indigo-400 hover:text-indigo-300">
+            View in chat ↗
+          </a>
+          {% endif %}
+        </div>
+        <div class="text-sm text-gray-300 whitespace-pre-wrap line-clamp-6">{{ msg.content }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-gray-500 text-sm">No output yet. The workflow hasn't run or uses silent delivery.</p>
+    {% endif %}
+  </div>
+
   {# YAML editor #}
   <div class="space-y-2" x-data="{ saved: '' }">
     <div class="flex items-center justify-between">

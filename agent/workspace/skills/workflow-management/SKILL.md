@@ -27,14 +27,32 @@ version: 1
 
 Workflows are YAML files stored in `workflows/`. Each workflow has a trigger (cron, interval, or one-shot), an agent assignment, steps, and a delivery mode.
 
+### ⚠️ Critical rule: Do NOT perform the task yourself
+
+When the user asks you to do something at a specific time or on a schedule, your **only** job is to create the workflow file. Do **not** execute the underlying task yourself. Do not write the report, fetch the joke, check the weather, or do anything the workflow steps will do. If you find yourself about to perform the requested task inline — stop. That work belongs to the scheduled workflow steps.
+
 ### Creating a workflow
 
 1. Write the workflow YAML using `file_write` to `workflows/<name>.yml`
 2. Call `reload_workflows` to register it with the scheduler
+3. Reply to the user with the confirmation template below
 
-**Stop after step 2.** Do not repeat these steps. If `reload_workflows` returns any response without an `error` field, the workflow is registered — even if `count` is 0. Do not write the file again or call `reload_workflows` again.
+**Stop after step 3.** Do not repeat these steps. If `reload_workflows` returns any response without an `error` field, the workflow is registered — even if `count` is 0.
 
 Always include the current `conversation_id` in the YAML when delivery is `announce` (the default).
+
+### Confirmation reply template
+
+After successfully creating a workflow, reply using exactly this format:
+
+```
+Scheduled ✓
+Workflow: <name>
+Runs: <human-readable schedule, e.g. "once at 15:20 today" or "every Monday at 9am">
+The output will appear in this conversation when the job runs.
+```
+
+Do not add anything else. Do not perform the task. Do not say "Here is the result" or provide the output.
 
 ### Workflow YAML schema
 

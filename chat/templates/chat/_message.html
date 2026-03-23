@@ -7,13 +7,25 @@
 
 {% elif message.role == 'assistant' %}
 {# ── Assistant message ── #}
-<div class="flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full">
+<div class="flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full" id="msg-{{ message.id }}">
   <div class="flex-shrink-0 w-7 h-7 rounded-full bg-[#19c37d] flex items-center justify-center mt-0.5">
     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="currentColor">
       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
     </svg>
   </div>
   <div class="flex-1 min-w-0 pt-0.5">
+    {% if message.metadata.source == "workflow" %}
+    <div class="flex items-center gap-2 mb-1.5">
+      <a href="/agent/workflows/{{ message.metadata.workflow_id }}/"
+         class="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300 hover:bg-indigo-900 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Scheduled output · {{ message.metadata.workflow_name }}
+      </a>
+      <span class="text-[11px] text-gray-500">{{ message.created_at|date:"Y-m-d H:i" }}</span>
+    </div>
+    {% endif %}
     <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed"
          data-markdown>{{ message.content }}</div>
     {% if message.model %}

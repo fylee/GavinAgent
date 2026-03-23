@@ -8,17 +8,32 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def _get_or_create_workflow_inbox():
+    """Return (or lazily create) the catch-all Workflow Outputs conversation."""
+    from chat.models import Conversation
+
+    # get_or_create doesn't support JSONField lookups, so query manually.
+    inbox = Conversation.objects.filter(
+        interface=Conversation.Interface.WEB,
+        metadata__workflow_inbox=True,
+    ).first()
+    if inbox is None:
+        inbox = Conversation.objects.create(
+            interface=Conversation.Interface.WEB,
+            title="Workflow Outputs",
+            metadata={"system": True, "workflow_inbox": True},
+        )
+        logger.info("Created Workflow Outputs inbox conversation %s", inbox.id)
+    return inbox
+
+
 def _deliver(workflow, output: str) -> None:
-    from agent.models import Workflow
     from chat.models import Message
 
     if workflow.delivery == "silent":
         return
 
-    if workflow.delivery == "telegram" or (
-        workflow.delivery == "announce" and not workflow.conversation_id
-    ):
-        # Send via Telegram
+    if workflow.delivery == "telegram":
         try:
             from interfaces.telegram.sender import send_message as tg_send
             tg_send(output)
@@ -26,13 +41,22 @@ def _deliver(workflow, output: str) -> None:
             logger.error("Workflow %s: Telegram delivery failed: %s", workflow.name, exc)
         return
 
-    if workflow.delivery == "announce" and workflow.conversation_id:
+    if workflow.delivery == "announce":
+        # Use the linked conversation, or fall back to the shared inbox.
+        target = workflow.conversation if workflow.conversation_id else _get_or_create_workflow_inbox()
         try:
             Message.objects.create(
-                conversation=workflow.conversation,
+                conversation=target,
                 role=Message.Role.ASSISTANT,
                 content=output,
+                metadata={
+                    "source": "workflow",
+                    "workflow_id": str(workflow.id),
+                    "workflow_name": workflow.name,
+                },
             )
+            # Bump updated_at so the conversation surfaces at the top of the sidebar.
+            target.save(update_fields=["updated_at"])
         except Exception as exc:
             logger.error("Workflow %s: announce delivery failed: %s", workflow.name, exc)
 
