@@ -41,7 +41,6 @@ htmlcov/
 # Workspace runtime files (keep examples and configs, ignore outputs)
 agent/workspace/HEARTBEAT.md
 agent/workspace/memory/
-agent/workspace/skills/
 agent/workspace/*.txt
 agent/workspace/*.docx
 agent/workspace/*.py
