@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, QueryDict
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
