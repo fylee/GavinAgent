@@ -1,0 +1,80 @@
+{% extends "chat/base_chat.html" %}
+{% block title %}{{ workflow.name }} — Scheduled{% endblock %}
+
+{% block header_content %}
+<div class="flex items-center gap-3 flex-1 min-w-0">
+  <div class="flex items-center gap-2 min-w-0">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 flex-shrink-0 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+    </svg>
+    <span class="text-sm font-medium text-gray-200 truncate">{{ workflow.name }}</span>
+    {% if workflow.description %}
+    <span class="text-xs text-gray-500 truncate hidden md:block">· {{ workflow.description }}</span>
+    {% endif %}
+  </div>
+  <span class="text-xs text-gray-500 font-mono flex-shrink-0">{{ workflow.schedule_display }}</span>
+</div>
+<a href="/agent/workflows/{{ workflow.pk }}/"
+   class="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-400 hover:bg-white/10 transition-colors">
+  Edit workflow ↗
+</a>
+{% endblock %}
+
+{% block chat_content %}
+<div class="flex flex-col flex-1 min-h-0 overflow-hidden">
+  <div id="message-list"
+       class="flex-1 overflow-y-auto py-6 space-y-4 min-h-0">
+
+    {% if output_messages %}
+      {% for msg in output_messages %}
+      <div class="flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full" id="msg-{{ msg.id }}">
+        <div class="flex-shrink-0 w-7 h-7 rounded-full bg-indigo-700 flex items-center justify-center mt-0.5">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </div>
+        <div class="flex-1 min-w-0 pt-0.5">
+          <p class="text-[11px] text-gray-500 mb-1">{{ msg.created_at|date:"Y-m-d H:i" }}</p>
+          <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed"
+               data-markdown>{{ msg.content }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="flex flex-col items-center justify-center h-full text-center px-6 gap-3">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <p class="text-gray-400 font-medium">No output yet</p>
+      <p class="text-gray-600 text-sm max-w-sm">
+        This workflow hasn't run yet, or it uses silent delivery.
+        The schedule is: <span class="font-mono text-gray-500">{{ workflow.schedule_display }}</span>
+      </p>
+    </div>
+    {% endif %}
+
+  </div>
+
+  {# Read-only footer — no input bar #}
+  <div class="flex-shrink-0 px-4 py-3 border-t border-white/10">
+    <p class="text-center text-xs text-gray-600">
+      This is a read-only view. Output is generated automatically by the scheduled workflow.
+    </p>
+  </div>
+</div>
+
+<script>
+(function () {
+  const msgList = document.getElementById('message-list');
+  if (msgList) msgList.scrollTop = msgList.scrollHeight;
+
+  function renderMarkdown() {
+    document.querySelectorAll('[data-markdown]:not([data-rendered])').forEach(function (el) {
+      el.innerHTML = marked.parse(el.textContent);
+      el.dataset.rendered = '1';
+    });
+  }
+  renderMarkdown();
+})();
+</script>
+{% endblock %}

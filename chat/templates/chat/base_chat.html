@@ -37,6 +37,33 @@
 
       {# Conversation list #}
       <nav class="flex-1 overflow-y-auto py-2">
+
+        {# ── Scheduled workflows ── #}
+        {% if scheduled_workflows %}
+        <div class="mb-3">
+          <p class="px-3 py-1 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Scheduled</p>
+          <ul>
+            {% for wf in scheduled_workflows %}
+            <li>
+              <a href="{% url 'chat:workflow-output' pk=wf.pk %}"
+                 class="flex items-center gap-2 mx-1 px-3 py-2 rounded-lg text-sm truncate transition-colors
+                        {% if current_workflow_id == wf.pk|stringformat:'s' %}
+                          bg-white/10 text-white
+                        {% else %}
+                          text-gray-300 hover:bg-white/5 hover:text-white
+                        {% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 flex-shrink-0 text-indigo-400 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span class="truncate">{{ wf.name }}</span>
+              </a>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+
+        {# ── Regular conversations by date ── #}
         {% for group_label, group_conversations in conversation_groups %}
         <div class="mb-3">
           <p class="px-3 py-1 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
@@ -52,15 +79,9 @@
                         {% else %}
                           text-gray-300 hover:bg-white/5 hover:text-white
                         {% endif %}">
-                {% if conv.metadata.workflow_inbox %}
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 flex-shrink-0 text-indigo-400 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
-                {% else %}
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 flex-shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3v-3z"/>
                 </svg>
-                {% endif %}
                 <span id="sidebar-title-{{ conv.id }}" class="truncate">{{ conv.title|default:"New Chat" }}</span>
               </a>
             </li>
@@ -68,8 +89,11 @@
           </ul>
         </div>
         {% empty %}
+        {% if not scheduled_workflows %}
         <p class="px-4 py-3 text-xs text-gray-500">No chats yet.</p>
+        {% endif %}
         {% endfor %}
+
       </nav>
 
     </div>

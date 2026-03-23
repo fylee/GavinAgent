@@ -19,34 +19,35 @@ class SidebarMixin:
     """Adds sidebar conversation groups and available models to context."""
 
     def get_sidebar_context(self) -> dict:
+        from agent.models import Workflow
+
         conversations = list(
             Conversation.objects.filter(
-                interface=Conversation.Interface.WEB
+                interface=Conversation.Interface.WEB,
+            ).exclude(
+                metadata__workflow_inbox=True,
             ).order_by("-updated_at")[:100]
         )
         today = timezone.now().date()
         yesterday = today - timedelta(days=1)
         week_ago = today - timedelta(days=7)
 
-        # Separate system workflow inbox from regular conversations
-        scheduled = [c for c in conversations if c.metadata.get("workflow_inbox")]
-        regular = [c for c in conversations if not c.metadata.get("workflow_inbox")]
-
-        groups = []
-        if scheduled:
-            groups.append(("Scheduled", scheduled))
-
-        groups += [
-            ("Today", [c for c in regular if c.updated_at.date() == today]),
-            ("Yesterday", [c for c in regular if c.updated_at.date() == yesterday]),
+        groups = [
+            ("Today", [c for c in conversations if c.updated_at.date() == today]),
+            ("Yesterday", [c for c in conversations if c.updated_at.date() == yesterday]),
             (
                 "Previous 7 days",
-                [c for c in regular if week_ago < c.updated_at.date() < yesterday],
+                [c for c in conversations if week_ago < c.updated_at.date() < yesterday],
             ),
-            ("Older", [c for c in regular if c.updated_at.date() <= week_ago]),
+            ("Older", [c for c in conversations if c.updated_at.date() <= week_ago]),
         ]
+        # Scheduled workflows — each shown as a separate entry in the sidebar
+        scheduled_workflows = list(
+            Workflow.objects.filter(enabled=True).order_by("name")[:50]
+        )
         return {
             "conversation_groups": [(label, items) for label, items in groups if items],
+            "scheduled_workflows": scheduled_workflows,
             "available_models": settings.AVAILABLE_MODELS,
         }
 
@@ -248,6 +249,27 @@ class MessageStreamView(View):
                 request=request,
             )
         return HttpResponse(html)
+
+
+class WorkflowOutputView(SidebarMixin, View):
+    """Read-only conversation-style view showing all output messages for a single workflow."""
+
+    template_name = "chat/workflow_output.html"
+
+    def get(self, request: HttpRequest, pk: str) -> HttpResponse:
+        from agent.models import Workflow
+        workflow = get_object_or_404(Workflow, pk=pk)
+        output_messages = (
+            Message.objects.filter(metadata__workflow_id=str(pk))
+            .order_by("created_at")
+        )
+        ctx = {
+            "workflow": workflow,
+            "output_messages": output_messages,
+            "current_workflow_id": str(pk),
+        }
+        ctx.update(self.get_sidebar_context())
+        return render(request, self.template_name, ctx)
 
 
 class ConversationAgentToggleView(View):

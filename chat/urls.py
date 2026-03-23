@@ -18,4 +18,5 @@ urlpatterns = [
         views.MessageStreamView.as_view(),
         name="message-stream",
     ),
+    path("scheduled/<uuid:pk>/", views.WorkflowOutputView.as_view(), name="workflow-output"),
 ]
