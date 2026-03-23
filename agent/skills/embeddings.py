@@ -24,10 +24,15 @@ def _skills_dir() -> Path:
     return Path(settings.AGENT_WORKSPACE_DIR) / "skills"
 
 
-def _skill_embed_text(name: str, description: str, body: str) -> str:
+def _skill_embed_text(name: str, description: str, body: str, examples: list[str] | None = None) -> str:
     """Build the text that gets embedded for a skill."""
+    parts = [f"{name}: {description}"]
+    if examples:
+        parts.append("Example requests: " + "; ".join(examples[:10]))
     excerpt = body[:EMBED_TEXT_MAX_CHARS].strip()
-    return f"{name}: {description}\n\n{excerpt}"
+    if excerpt:
+        parts.append(excerpt)
+    return "\n\n".join(parts)
 
 
 def _content_hash(text: str) -> str:
@@ -67,7 +72,8 @@ def embed_all_skills() -> list[str]:
 
             name = meta.get("name", skill_dir.name)
             description = meta.get("description", "")
-            embed_input = _skill_embed_text(name, description, body)
+            examples = meta.get("examples", [])
+            embed_input = _skill_embed_text(name, description, body, examples)
             chash = _content_hash(embed_input)
 
             existing = SkillEmbedding.objects.filter(skill_name=name).first()

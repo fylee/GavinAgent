@@ -1,6 +1,17 @@
 ---
 name: workflow-management
-description: Creating, updating, and managing scheduled workflows
+description: Creating, updating, and managing scheduled workflows — use this when the user wants something done at a specific time, on a schedule, or repeated automatically
+examples:
+  - "tell me a joke at 3pm today"
+  - "send me a weather report every morning at 8am"
+  - "remind me to drink water every 30 minutes"
+  - "run a report every Monday at 9am"
+  - "schedule a task for tomorrow at noon"
+  - "tell me a joke every 10 minutes"
+  - "automatically check the stock price daily"
+  - "set up a recurring notification"
+  - "do something at 14:30"
+  - "repeat this task every hour"
 triggers: [workflow, cron, scheduled, schedule, recurring, periodically, interval, remind me, automatically]
 trigger_patterns:
   - "every\\s+(\\d+\\s+)?(minute|hour|day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)"

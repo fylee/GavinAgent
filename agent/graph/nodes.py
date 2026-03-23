@@ -79,15 +79,18 @@ def _build_skills_section(query: str) -> tuple[str, list[str]]:
         triggers: list[str] = meta.get("triggers", [])
         trigger_patterns: list[str] = meta.get("trigger_patterns", [])
 
-        # Embedding match (primary) — keyword/regex fallback if no embedding exists
+        # Embedding match (primary)
         if name in embedding_matches:
             matched = True
-        elif embedding_matches is not None and not embedding_matches and not triggers and not trigger_patterns:
-            # No embeddings at all in DB yet — fall back to always-inject for short skills
+        elif not embedding_matches and not triggers and not trigger_patterns:
+            # No embeddings at all in DB yet and no keywords — fall back to always-inject for short skills
             matched = len(body.splitlines()) < 50
         else:
-            # Keyword fallback
-            matched = any(t.lower() in query_lower for t in triggers) if triggers else False
+            # Keyword/regex fallback — only fires if the embedding did NOT match
+            # and the skill has explicit triggers or patterns configured
+            matched = False
+            if triggers:
+                matched = any(t.lower() in query_lower for t in triggers)
             if not matched and trigger_patterns:
                 matched = any(re.search(p, query_lower) for p in trigger_patterns)
 
