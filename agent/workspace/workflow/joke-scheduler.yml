@@ -1,0 +1,17 @@
+name: joke-scheduler
+
+description: Schedule to tell a joke every specified time.
+
+agent: default
+enabled: true
+delivery: announce
+
+# Schedule to start at 14:25 today
+trigger:
+  cron: '25 14 * * *'
+  timezone: Asia/Taipei
+
+steps:
+  - name: tell-joke
+    prompt: >
+      Tell me a funny joke.

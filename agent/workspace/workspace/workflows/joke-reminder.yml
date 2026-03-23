@@ -1,0 +1,18 @@
+name: joke-reminder
+  description: Send a joke every 10 minutes starting from 14:10
+  agent: default
+  enabled: true
+  delivery: announce
+  conversation: 298e5754-7d0d-4985-b789-fc9a5977f20b
+
+  trigger:
+    cron: "10-59/10 14 * * *"
+    timezone: Asia/Taipei
+
+  steps:
+    - name: tell-joke
+      prompt: >
+        Tell a joke.
+    - name: follow-up-joke
+      prompt: >
+        Tell another joke.

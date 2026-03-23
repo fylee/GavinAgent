@@ -389,3 +389,25 @@ class Memory(TimeStampedModel):
 
     def __str__(self):
         return f"Memory {self.id}: {self.content[:60]}"
+
+
+class SkillEmbedding(TimeStampedModel):
+    """Stores a semantic embedding for each workspace skill for similarity-based routing."""
+
+    skill_name = models.CharField(max_length=100, unique=True)
+    embedding = VectorField(dimensions=1536)
+    content_hash = models.CharField(max_length=64)  # SHA-256 of embedded text
+
+    class Meta:
+        indexes = [
+            HnswIndex(
+                name="skill_embedding_hnsw",
+                fields=["embedding"],
+                m=16,
+                ef_construction=64,
+                opclasses=["vector_cosine_ops"],
+            )
+        ]
+
+    def __str__(self):
+        return f"SkillEmbedding({self.skill_name})"

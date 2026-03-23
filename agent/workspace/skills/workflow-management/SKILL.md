@@ -1,7 +1,14 @@
 ---
 name: workflow-management
 description: Creating, updating, and managing scheduled workflows
-triggers: [create workflow, schedule, every monday, every day, every week, every hour, run automatically, set up a workflow, recurring task, automated task, remind me every, post every, check every, workflow, cron, scheduled]
+triggers: [workflow, cron, scheduled, schedule, recurring, periodically, interval, remind me, automatically]
+trigger_patterns:
+  - "every\\s+(\\d+\\s+)?(minute|hour|day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+  - "at\\s+\\d{1,2}[:\\.]\\d{2}"
+  - "at\\s+\\d{1,2}\\s*(am|pm)"
+  - "(today|tomorrow|daily|weekly|monthly|hourly)\\s+at"
+  - "run\\s+(at|every)"
+  - "(send|tell|remind|notify|post|check)\\s+me\\s+(at|every)"
 version: 1
 ---
 
@@ -12,7 +19,7 @@ Workflows are YAML files stored in `workspace/workflows/`. Each workflow has a t
 ### Creating a workflow
 
 1. Write the workflow YAML using `file_write` to `workspace/workflows/<name>.yml`
-2. Call `api_post` to `/agent/workflows/reload/` (no body required) to register it
+2. Call `reload_workflows` to register it with the scheduler
 
 Always include the current `conversation_id` in the YAML when delivery is `announce` (the default).
 
@@ -119,4 +126,4 @@ steps:
 
 ### After creating or editing a workflow
 
-Always call `api_post` to `/agent/workflows/reload/` so the scheduler picks up changes immediately.
+Always call `reload_workflows` after writing or updating a workflow file so the scheduler picks up changes immediately.

@@ -1,0 +1,15 @@
+name: joke-scheduler
+description: Schedule a joke for 14:25 today.
+agent: default
+enabled: true
+delivery: announce
+conversation: current_conversation_id
+
+trigger:
+  at: "2026-03-23T14:25:00+08:00"
+  timezone: Asia/Taipei
+
+steps:
+  - name: tell-joke
+    prompt: >
+      Tell a humorous joke.

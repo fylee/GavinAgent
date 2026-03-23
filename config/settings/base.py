@@ -105,6 +105,15 @@ AGENT_WORKSPACE_DIR = config(
     "AGENT_WORKSPACE_DIR", default=str(BASE_DIR / "agent" / "workspace")
 )
 
+# Agent timezone — used for system prompt datetime and default workflow cron timezone
+# Use any IANA timezone name: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+AGENT_TIMEZONE = config("AGENT_TIMEZONE", default="UTC")
+
+# Skill similarity threshold for embedding-based routing (0.0–1.0, higher = stricter)
+AGENT_SKILL_SIMILARITY_THRESHOLD = config(
+    "AGENT_SKILL_SIMILARITY_THRESHOLD", default=0.35, cast=float
+)
+
 # Heartbeat interval (minutes)
 AGENT_HEARTBEAT_INTERVAL_MINUTES = config(
     "AGENT_HEARTBEAT_INTERVAL_MINUTES", default=30, cast=int

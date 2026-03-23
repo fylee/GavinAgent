@@ -18,7 +18,7 @@ steps or tool calls, work through them autonomously until you have a complete an
 Be concise and direct. Prefer doing over explaining.\
 """
 
-DEFAULT_TOOLS = ["web_read", "api_get", "file_read", "file_write", "shell", "chart", "get_datetime"]
+DEFAULT_TOOLS = ["web_read", "api_get", "file_read", "file_write", "shell", "chart", "get_datetime", "reload_workflows"]
 
 
 def seed_default_agent(apps, schema_editor):

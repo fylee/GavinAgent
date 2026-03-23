@@ -62,7 +62,7 @@ class FileReadTool(BaseTool):
 class FileWriteTool(BaseTool):
     name = "file_write"
     description = "Write content to a file in the agent workspace. Creates the file if it doesn't exist."
-    approval_policy = ApprovalPolicy.REQUIRES_APPROVAL
+    approval_policy = ApprovalPolicy.AUTO
     parameters = {
         "type": "object",
         "properties": {

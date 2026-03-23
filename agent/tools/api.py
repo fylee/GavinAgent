@@ -50,26 +50,26 @@ class ApiGetTool(BaseTool):
 
 class ApiPostTool(BaseTool):
     name = "api_post"
-    description = "Make an HTTP POST request to a URL with a JSON body."
-    approval_policy = ApprovalPolicy.REQUIRES_APPROVAL
+    description = "Make an HTTP POST request to a URL with an optional JSON body."
+    approval_policy = ApprovalPolicy.AUTO
     parameters = {
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "URL to POST to."},
-            "body": {"type": "object", "description": "JSON body to send."},
+            "body": {"type": "object", "description": "Optional JSON body to send. Omit or pass {} if no body is needed."},
             "headers": {
                 "type": "object",
                 "description": "Optional HTTP headers.",
                 "additionalProperties": {"type": "string"},
             },
         },
-        "required": ["url", "body"],
+        "required": ["url"],
     }
 
     def execute(
         self,
         url: str,
-        body: dict,
+        body: dict | None = None,
         headers: dict | None = None,
         **kwargs: Any,
     ) -> ToolResult:
@@ -80,7 +80,7 @@ class ApiPostTool(BaseTool):
         max_chars = settings.MAX_TOOL_OUTPUT_CHARS
         try:
             resp = httpx.post(
-                url, json=body, headers=headers or {}, timeout=timeout, follow_redirects=True
+                url, json=body or {}, headers=headers or {}, timeout=timeout, follow_redirects=True
             )
             response_body = resp.text
             if len(response_body) > max_chars:

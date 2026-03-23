@@ -35,6 +35,16 @@ class AgentConfig(AppConfig):
         except Exception:
             pass
 
+        # Embed skills for semantic routing (run in a thread — DB must be ready)
+        import threading
+        def _embed_skills():
+            try:
+                from agent.skills.embeddings import embed_all_skills
+                embed_all_skills()
+            except Exception:
+                pass
+        threading.Thread(target=_embed_skills, daemon=True).start()
+
         # Start MCP connection pool (connects all enabled MCP servers)
         try:
             from agent.mcp.pool import MCPConnectionPool

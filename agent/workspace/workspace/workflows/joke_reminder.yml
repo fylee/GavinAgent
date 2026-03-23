@@ -1,0 +1,14 @@
+name: joke-reminder
+description: Sends a joke every 10 minutes
+agent: default
+enabled: true
+delivery: announce
+conversation: 298e5754-7d0d-4985-b789-fc9a5977f20b
+
+trigger:
+  interval_minutes: 10
+
+steps:
+  - name: tell-a-joke
+    prompt: >
+      Provide a funny joke for the user.

@@ -38,14 +38,23 @@ def _truncate_history(history: list[dict], budget_tokens: int, model: str) -> li
 
 
 def _build_skills_section(query: str) -> tuple[str, list[str]]:
-    """Scan workspace/skills/, match triggers against query, return section + triggered names."""
+    """Scan workspace/skills/, match against query using embeddings (with keyword fallback).
+
+    Returns (system_prompt_section, triggered_skill_names).
+    """
+    import re
     import yaml
+    from agent.skills.embeddings import find_relevant_skills
 
     skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
     if not skills_dir.exists():
         return "", []
 
     query_lower = query.lower()
+
+    # Embedding-based routing (primary)
+    embedding_matches: set[str] = set(find_relevant_skills(query))
+
     index_rows: list[str] = []
     body_sections: list[str] = []
     triggered: list[str] = []
@@ -68,8 +77,20 @@ def _build_skills_section(query: str) -> tuple[str, list[str]]:
         name = meta.get("name", skill_dir.name)
         description = meta.get("description", "")
         triggers: list[str] = meta.get("triggers", [])
+        trigger_patterns: list[str] = meta.get("trigger_patterns", [])
 
-        matched = any(t.lower() in query_lower for t in triggers) if triggers else False
+        # Embedding match (primary) — keyword/regex fallback if no embedding exists
+        if name in embedding_matches:
+            matched = True
+        elif embedding_matches is not None and not embedding_matches and not triggers and not trigger_patterns:
+            # No embeddings at all in DB yet — fall back to always-inject for short skills
+            matched = len(body.splitlines()) < 50
+        else:
+            # Keyword fallback
+            matched = any(t.lower() in query_lower for t in triggers) if triggers else False
+            if not matched and trigger_patterns:
+                matched = any(re.search(p, query_lower) for p in trigger_patterns)
+
         status = "**Active**" if matched else "Available"
         index_rows.append(f"| {name} | {description} | {status} |")
 
@@ -105,10 +126,13 @@ def _build_system_context(query: str) -> tuple[str, list[str]]:
     Returns (system_prompt, triggered_skill_names).
     """
     from datetime import datetime
-    now = datetime.now().astimezone()
+    import zoneinfo
+    agent_tz = zoneinfo.ZoneInfo(getattr(settings, "AGENT_TIMEZONE", "UTC"))
+    now = datetime.now(agent_tz)
     temporal_context = (
-        f"Current date and time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')} "
-        f"({now.strftime('%A')})"
+        f"Current date and time: {now.strftime('%Y-%m-%d %H:%M:%S')} {settings.AGENT_TIMEZONE} "
+        f"({now.strftime('%A')})\n"
+        f"When writing workflow cron expressions, use timezone: {settings.AGENT_TIMEZONE}"
     )
 
     agents_md = _read_workspace_file("AGENTS.md")
@@ -168,6 +192,11 @@ def call_llm(state: AgentState) -> dict:
 
     model = _get_agent_model(state["agent_id"])
     system_content, triggered_skills = _build_system_context(state.get("input", ""))
+
+    # Append conversation_id to system prompt so agent can reference it in workflows
+    conversation_id = state.get("conversation_id")
+    if conversation_id:
+        system_content += f"\n\n---\n\nCurrent conversation ID: `{conversation_id}`"
 
     # Build message list
     messages: list[dict] = [{"role": "system", "content": system_content}]
