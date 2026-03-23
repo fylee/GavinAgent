@@ -14,12 +14,14 @@ version: 1
 
 ## Workflow Management
 
-Workflows are YAML files stored in `workspace/workflows/`. Each workflow has a trigger (cron, interval, or one-shot), an agent assignment, steps, and a delivery mode.
+Workflows are YAML files stored in `workflows/`. Each workflow has a trigger (cron, interval, or one-shot), an agent assignment, steps, and a delivery mode.
 
 ### Creating a workflow
 
-1. Write the workflow YAML using `file_write` to `workspace/workflows/<name>.yml`
+1. Write the workflow YAML using `file_write` to `workflows/<name>.yml`
 2. Call `reload_workflows` to register it with the scheduler
+
+**Stop after step 2.** Do not repeat these steps. If `reload_workflows` returns any response without an `error` field, the workflow is registered — even if `count` is 0. Do not write the file again or call `reload_workflows` again.
 
 Always include the current `conversation_id` in the YAML when delivery is `announce` (the default).
 

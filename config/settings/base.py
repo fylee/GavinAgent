@@ -114,6 +114,9 @@ AGENT_SKILL_SIMILARITY_THRESHOLD = config(
     "AGENT_SKILL_SIMILARITY_THRESHOLD", default=0.35, cast=float
 )
 
+# Maximum tool-call rounds per agent run before force-concluding
+AGENT_MAX_TOOL_CALL_ROUNDS = config("AGENT_MAX_TOOL_CALL_ROUNDS", default=20, cast=int)
+
 # Heartbeat interval (minutes)
 AGENT_HEARTBEAT_INTERVAL_MINUTES = config(
     "AGENT_HEARTBEAT_INTERVAL_MINUTES", default=30, cast=int

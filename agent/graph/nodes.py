@@ -208,7 +208,26 @@ def call_llm(state: AgentState) -> dict:
             .order_by("created_at")
             .values("role", "content")
         )
-        history = [{"role": m["role"], "content": m["content"]} for m in chat_msgs]
+        # Strip assistant messages that are capability disclaimers or LLM errors —
+        # they cause the agent to re-attempt already-completed tasks on every round.
+        _error_prefixes = (
+            "llm error:",
+            "i currently cannot",
+            "i can't execute",
+            "i am unable",
+            "i'm unable",
+            "since i can't",
+            "currently, i'm unable",
+            "i cannot execute any further",
+        )
+        history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in chat_msgs
+            if not (
+                m["role"] == "assistant"
+                and any((m["content"] or "").lower().strip().startswith(p) for p in _error_prefixes)
+            )
+        ]
         history = _truncate_history(history, settings.AGENT_CONTEXT_BUDGET_TOKENS, model)
         messages.extend(history)
     else:

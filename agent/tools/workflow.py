@@ -8,8 +8,9 @@ from .base import ApprovalPolicy, BaseTool, ToolResult
 class ReloadWorkflowsTool(BaseTool):
     name = "reload_workflows"
     description = (
-        "Reload workflow definitions from workspace/workflows/*.yml and register them "
-        "with the scheduler. Always call this after writing or updating a workflow file."
+        "Reload workflow definitions from workflows/*.yml and register them "
+        "with the scheduler. Always call this after writing or updating a workflow file. "
+        "A successful response (even with count=0) means the call completed — do not retry."
     )
     approval_policy = ApprovalPolicy.AUTO
     parameters = {

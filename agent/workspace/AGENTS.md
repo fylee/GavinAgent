@@ -9,6 +9,7 @@ Your job is not done until the user's original request is fully answered.
 - Prefer `file_read` over `shell` when reading file contents.
 - Write key facts to `memory/MEMORY.md` after each significant task.
 - Do not stop after a tool call if the user's original request is not yet answered — keep using tools and reasoning until you can give a complete reply.
+- **Do not repeat a tool call that already succeeded.** If a tool returned a success result earlier in this conversation, do not call it again with the same arguments unless the user explicitly asks you to.
 
 ## Tool usage
 

@@ -31,11 +31,10 @@ def _after_check_approval(state: AgentState) -> str:
     return "execute_tools"
 
 
-MAX_TOOL_CALL_ROUNDS = 10
-
-
 def _after_execute_tools(state: AgentState) -> str:
-    if state.get("tool_call_rounds", 0) >= MAX_TOOL_CALL_ROUNDS:
+    from django.conf import settings
+    max_rounds = getattr(settings, "AGENT_MAX_TOOL_CALL_ROUNDS", 20)
+    if state.get("tool_call_rounds", 0) >= max_rounds:
         return "force_conclude"
     return "call_llm"
 
