@@ -76,6 +76,7 @@ class AgentRun(TimeStampedModel):
         TELEGRAM = "telegram", "Telegram"
         CLI = "cli", "CLI"
         HEARTBEAT = "heartbeat", "Heartbeat"
+        WORKFLOW = "workflow", "Workflow"
 
     id = models.UUIDField(primary_key=True, default=uuid4)
     agent = models.ForeignKey(Agent, on_delete=models.PROTECT, related_name="runs")
@@ -96,6 +97,16 @@ class AgentRun(TimeStampedModel):
     graph_state = models.JSONField(default=dict)
     celery_task_id = models.CharField(max_length=255, blank=True)
     error = models.TextField(blank=True)
+    triggered_skills = models.JSONField(default=list, blank=True)
+    workflow = models.ForeignKey(
+        "Workflow",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="runs",
+    )
+    workflow_step = models.IntegerField(null=True, blank=True)
+    workflow_step_name = models.CharField(max_length=100, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
@@ -108,6 +119,57 @@ class AgentRun(TimeStampedModel):
 
     def __str__(self):
         return f"AgentRun {self.id} ({self.status})"
+
+
+class Workflow(TimeStampedModel):
+    """A scheduled multi-step workflow defined by a YAML file."""
+
+    id = models.UUIDField(primary_key=True, default=uuid4)
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True)
+    agent = models.ForeignKey(
+        Agent,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="workflows",
+    )
+    conversation = models.ForeignKey(
+        "chat.Conversation",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="workflows",
+    )
+    enabled = models.BooleanField(default=True)
+    definition = models.JSONField()
+    filename = models.CharField(max_length=255)
+    delivery = models.CharField(max_length=20, default="announce")
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    next_run_at = models.DateTimeField(null=True, blank=True)
+    celery_beat_id = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+    @property
+    def step_count(self) -> int:
+        return len(self.definition.get("steps", []))
+
+    @property
+    def schedule_display(self) -> str:
+        trigger = self.definition.get("trigger", {})
+        if "cron" in trigger:
+            tz = trigger.get("timezone", "UTC")
+            return f"cron: {trigger['cron']} ({tz})"
+        if "interval_minutes" in trigger:
+            return f"every {trigger['interval_minutes']} min"
+        if "at" in trigger:
+            return f"once at {trigger['at']}"
+        return "unknown"
 
 
 class ToolExecution(TimeStampedModel):

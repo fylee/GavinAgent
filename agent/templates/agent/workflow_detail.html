@@ -1,0 +1,142 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}{{ workflow.name }} — Workflow{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+
+  {# Header #}
+  <div class="flex items-center justify-between">
+    <div>
+      <div class="flex items-center gap-3">
+        <a href="{% url 'agent:workflow-list' %}" class="text-gray-500 hover:text-gray-300 text-sm">← Workflows</a>
+      </div>
+      <h1 class="text-xl font-semibold text-white mt-1">{{ workflow.name }}</h1>
+      {% if workflow.description %}
+      <p class="text-sm text-gray-400 mt-1">{{ workflow.description }}</p>
+      {% endif %}
+    </div>
+    <div class="flex items-center gap-3">
+      <span id="run-now-status"></span>
+      <button hx-post="{% url 'agent:workflow-run-now' workflow.pk %}"
+              hx-target="#run-now-status"
+              hx-swap="innerHTML"
+              class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
+        Run now
+      </button>
+      <span id="toggle-{{ workflow.pk }}">
+        {% include "agent/_workflow_toggle.html" %}
+      </span>
+    </div>
+  </div>
+
+  {# Meta #}
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="rounded-lg border border-white/10 p-3">
+      <div class="text-xs text-gray-500 mb-1">Schedule</div>
+      <div class="text-sm text-gray-300 font-mono">{{ workflow.schedule_display }}</div>
+    </div>
+    <div class="rounded-lg border border-white/10 p-3">
+      <div class="text-xs text-gray-500 mb-1">Agent</div>
+      <div class="text-sm text-gray-300">{{ workflow.agent.name|default:"default" }}</div>
+    </div>
+    <div class="rounded-lg border border-white/10 p-3">
+      <div class="text-xs text-gray-500 mb-1">Delivery</div>
+      <div class="text-sm text-gray-300">{{ workflow.delivery }}</div>
+    </div>
+    <div class="rounded-lg border border-white/10 p-3">
+      <div class="text-xs text-gray-500 mb-1">Last run</div>
+      <div class="text-sm text-gray-300">
+        {% if workflow.last_run_at %}{{ workflow.last_run_at|date:"Y-m-d H:i" }}{% else %}Never{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Steps #}
+  <div class="space-y-3">
+    <h2 class="text-sm font-medium text-gray-300">Steps ({{ workflow.step_count }})</h2>
+    {% for step in workflow.definition.steps %}
+    <div class="rounded-lg border border-white/10 p-4" x-data="{ open: false }">
+      <div class="flex items-center justify-between cursor-pointer" @click="open = !open">
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-gray-500 font-mono">{{ forloop.counter }}</span>
+          <span class="text-sm text-white font-medium">{{ step.name }}</span>
+        </div>
+        <span class="text-gray-500 text-xs" x-text="open ? '▲' : '▼'"></span>
+      </div>
+      <div x-show="open" x-cloak class="mt-3 pt-3 border-t border-white/10">
+        <pre class="text-xs text-gray-300 font-mono whitespace-pre-wrap">{{ step.prompt }}</pre>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# YAML editor #}
+  <div class="space-y-2" x-data="{ saved: '' }">
+    <div class="flex items-center justify-between">
+      <h2 class="text-sm font-medium text-gray-300">YAML definition</h2>
+      <div class="flex items-center gap-2">
+        <span x-text="saved" class="text-sm text-green-400"></span>
+        <button hx-post="{% url 'agent:workflow-save' workflow.pk %}"
+                hx-include="#yaml-editor"
+                hx-target="#save-status"
+                hx-swap="innerHTML"
+                class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
+          Save
+        </button>
+      </div>
+    </div>
+    <span id="save-status" class="text-sm"></span>
+    <textarea id="yaml-editor"
+              name="yaml_content"
+              rows="20"
+              class="w-full font-mono text-xs text-gray-300 rounded-lg border border-white/10 p-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-y"
+              style="background-color: #202123;">{{ workflow_yaml }}</textarea>
+  </div>
+
+  {# Run history #}
+  <div class="space-y-3">
+    <h2 class="text-sm font-medium text-gray-300">Recent runs</h2>
+    {% if runs %}
+    <div class="rounded-lg border border-white/10 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead style="background-color: #202123;">
+          <tr class="text-left text-xs text-gray-400 uppercase tracking-wider">
+            <th class="px-4 py-2">Step</th>
+            <th class="px-4 py-2">Status</th>
+            <th class="px-4 py-2">Started</th>
+            <th class="px-4 py-2"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/5">
+          {% for run in runs %}
+          <tr class="hover:bg-white/5 transition-colors">
+            <td class="px-4 py-2 text-gray-300">
+              <span class="text-gray-500 font-mono text-xs mr-2">{{ run.workflow_step|add:"1" }}</span>
+              {{ run.workflow_step_name }}
+            </td>
+            <td class="px-4 py-2">
+              <span class="text-xs px-2 py-0.5 rounded-full
+                {% if run.status == 'completed' %}bg-green-900 text-green-300
+                {% elif run.status == 'failed' %}bg-red-900 text-red-300
+                {% elif run.status == 'running' %}bg-blue-900 text-blue-300
+                {% elif run.status == 'waiting' %}bg-yellow-900 text-yellow-300
+                {% else %}bg-gray-700 text-gray-300{% endif %}">
+                {{ run.get_status_display }}
+              </span>
+            </td>
+            <td class="px-4 py-2 text-gray-500 text-xs">{{ run.created_at|date:"Y-m-d H:i" }}</td>
+            <td class="px-4 py-2">
+              <a href="{% url 'agent:detail' run.pk %}" class="text-xs text-indigo-400 hover:text-indigo-300">View</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-gray-500 text-sm">No runs yet.</p>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Workflows{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-semibold text-white">Workflows</h1>
+    <div class="flex items-center gap-3">
+      <span id="reload-status"></span>
+      <button hx-post="{% url 'agent:workflow-reload' %}"
+              hx-target="#reload-status"
+              hx-swap="innerHTML"
+              class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
+        Reload
+      </button>
+      <a href="{% url 'agent:workflow-create' %}"
+         class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
+        + New workflow
+      </a>
+    </div>
+  </div>
+
+  <p class="text-xs text-gray-500">
+    Workflows are defined as YAML files in
+    <code class="font-mono">workspace/workflows/</code>.
+    Each workflow has a trigger (cron, interval, or one-shot) and one or more steps.
+    Each step runs as an isolated agent run; the previous step's output is passed as context.
+  </p>
+
+  {% if workflows %}
+  <div class="rounded-lg border border-white/10 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead style="background-color: #202123;">
+        <tr class="text-left text-xs text-gray-400 uppercase tracking-wider">
+          <th class="px-4 py-3">Name</th>
+          <th class="px-4 py-3">Schedule</th>
+          <th class="px-4 py-3">Agent</th>
+          <th class="px-4 py-3">Delivery</th>
+          <th class="px-4 py-3 text-center">Steps</th>
+          <th class="px-4 py-3">Last run</th>
+          <th class="px-4 py-3 text-center">Enabled</th>
+          <th class="px-4 py-3"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-white/5">
+        {% for wf in workflows %}
+        <tr class="hover:bg-white/5 transition-colors">
+          <td class="px-4 py-3">
+            <a href="{% url 'agent:workflow-detail' wf.pk %}"
+               class="text-indigo-400 hover:text-indigo-300 font-medium">{{ wf.name }}</a>
+            {% if wf.description %}
+            <div class="text-xs text-gray-500 mt-0.5">{{ wf.description }}</div>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ wf.schedule_display }}</td>
+          <td class="px-4 py-3 text-gray-400 text-xs">{{ wf.agent.name|default:"default" }}</td>
+          <td class="px-4 py-3 text-gray-400 text-xs">{{ wf.delivery }}</td>
+          <td class="px-4 py-3 text-center text-gray-300">{{ wf.step_count }}</td>
+          <td class="px-4 py-3 text-gray-500 text-xs">
+            {% if wf.last_run_at %}{{ wf.last_run_at|date:"Y-m-d H:i" }}{% else %}—{% endif %}
+          </td>
+          <td class="px-4 py-3 text-center" id="toggle-{{ wf.pk }}">
+            {% include "agent/_workflow_toggle.html" with workflow=wf %}
+          </td>
+          <td class="px-4 py-3">
+            <button hx-post="{% url 'agent:workflow-run-now' wf.pk %}"
+                    hx-swap="none"
+                    class="text-xs px-2 py-1 rounded border border-white/20 text-gray-400 hover:bg-white/10 transition-colors">
+              Run now
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% else %}
+  <div class="rounded-lg border border-white/10 p-8 text-center text-gray-500">
+    <p class="mb-2">No workflows found.</p>
+    <p class="text-xs">
+      Add a <code class="font-mono">.yml</code> file to
+      <code class="font-mono">workspace/workflows/</code> and click Reload, or
+      <a href="{% url 'agent:workflow-create' %}" class="text-indigo-400 hover:underline">create one here</a>.
+    </p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

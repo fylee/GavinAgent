@@ -28,6 +28,13 @@ class AgentConfig(AppConfig):
         except Exception:
             pass
 
+        # Load workflows from workspace/workflows/
+        try:
+            from agent.workflows.loader import WorkflowLoader
+            WorkflowLoader().load_all()
+        except Exception:
+            pass
+
         # Start MCP connection pool (connects all enabled MCP servers)
         try:
             from agent.mcp.pool import MCPConnectionPool

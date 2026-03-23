@@ -93,6 +93,24 @@ def heartbeat_task():
 
 
 @shared_task
+def execute_workflow(workflow_id: str) -> None:
+    """Execute a workflow by running all its steps in sequence."""
+    from agent.models import Workflow
+    from agent.workflows.runner import WorkflowRunner
+
+    try:
+        workflow = Workflow.objects.get(pk=workflow_id)
+    except Workflow.DoesNotExist:
+        logger.warning("execute_workflow: workflow %s not found", workflow_id)
+        return
+
+    if not workflow.enabled:
+        return
+
+    WorkflowRunner().run(workflow)
+
+
+@shared_task
 def reembed_memory_task():
     """Celery task: full reembed of MEMORY.md into the vector store."""
     from agent.memory.long_term import full_reembed

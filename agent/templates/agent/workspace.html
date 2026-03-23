@@ -8,9 +8,22 @@
 
   <p class="text-xs text-gray-500">
     These files are read by the agent on every run. Edit them to adjust the agent's
-    personality, goals, and heartbeat tasks. <code class="font-mono">MEMORY.md</code> is
+    personality and goals. <code class="font-mono">MEMORY.md</code> is
     managed via the <a href="{% url 'agent:memory' %}" class="text-blue-400 hover:text-blue-300">Memory</a> page.
+    Recurring tasks are managed via <a href="{% url 'agent:workflow-list' %}" class="text-blue-400 hover:text-blue-300">Workflows</a>.
   </p>
+
+  {% if heartbeat_deprecated %}
+  <div class="rounded-lg border border-yellow-700/40 bg-yellow-900/10 px-4 py-3">
+    <p class="text-yellow-400 text-sm font-medium">HEARTBEAT.md is deprecated</p>
+    <p class="text-yellow-300 text-xs mt-1">
+      The <code class="font-mono">HEARTBEAT.md</code> checklist mechanism has been replaced by the
+      <a href="{% url 'agent:workflow-list' %}" class="underline hover:text-yellow-200">Workflow scheduling system</a>.
+      Convert your checklist items to workflow YAML files in <code class="font-mono">workspace/workflows/</code>,
+      then delete <code class="font-mono">HEARTBEAT.md</code>.
+    </p>
+  </div>
+  {% endif %}
 
   <div class="rounded-xl border border-white/10 overflow-hidden" style="background-color: #202123;">
     <table class="w-full text-sm">

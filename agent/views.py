@@ -9,6 +9,25 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+def _load_skill_bodies(skill_names: list[str]) -> dict[str, str]:
+    """Return {skill_name: markdown_body} for each triggered skill."""
+    import yaml
+    skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
+    result = {}
+    for name in skill_names:
+        skill_md = skills_dir / name / "SKILL.md"
+        if not skill_md.exists():
+            continue
+        text = skill_md.read_text(encoding="utf-8")
+        body = text
+        if text.startswith("---"):
+            parts = text.split("---", 2)
+            if len(parts) >= 3:
+                body = parts[2].strip()
+        result[name] = body
+    return result
+
 from django import forms
 from django.conf import settings
 from django.core.paginator import Paginator
@@ -21,7 +40,7 @@ from django.views import View
 from django.views.generic import ListView, DetailView, TemplateView
 from django_htmx.http import HttpResponseClientRedirect
 
-from .models import Agent, AgentRun, HeartbeatLog, LLMUsage, ReembedLog, Skill, ToolExecution
+from .models import Agent, AgentRun, HeartbeatLog, LLMUsage, ReembedLog, Skill, ToolExecution, Workflow
 from .tasks import execute_agent_run
 
 
@@ -61,7 +80,7 @@ class RunListView(View):
     template_name = "agent/run_list.html"
 
     def get(self, request: HttpRequest) -> HttpResponse:
-        qs = AgentRun.objects.select_related("agent").order_by("-created_at")
+        qs = AgentRun.objects.select_related("agent", "workflow").order_by("-created_at")
         status_filter = request.GET.get("status", "")
         source_filter = request.GET.get("source", "")
         if status_filter:
@@ -111,7 +130,11 @@ class RunDetailView(View):
     def get(self, request: HttpRequest, pk) -> HttpResponse:
         run = get_object_or_404(AgentRun.objects.select_related("agent"), pk=pk)
         tool_executions = run.tool_executions.order_by("created_at")
-        ctx = {"run": run, "tool_executions": tool_executions}
+        ctx = {
+            "run": run,
+            "tool_executions": tool_executions,
+            "skill_bodies": _load_skill_bodies(run.triggered_skills or []),
+        }
         return render(request, self.template_name, ctx)
 
 
@@ -121,7 +144,11 @@ class RunStatusView(View):
         tool_executions = run.tool_executions.order_by("created_at")
         html = render_to_string(
             "agent/_run_status.html",
-            {"run": run, "tool_executions": tool_executions},
+            {
+                "run": run,
+                "tool_executions": tool_executions,
+                "skill_bodies": _load_skill_bodies(run.triggered_skills or []),
+            },
             request=request,
         )
         return HttpResponse(html)
@@ -146,7 +173,7 @@ class RunRespondView(View):
             tool_executions = run.tool_executions.order_by("created_at")
             html = render_to_string(
                 "agent/_run_status.html",
-                {"run": run, "tool_executions": tool_executions},
+                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or [])},
                 request=request,
             )
             return HttpResponse(html)
@@ -166,7 +193,7 @@ class RunCancelView(View):
             tool_executions = run.tool_executions.order_by("created_at")
             html = render_to_string(
                 "agent/_run_status.html",
-                {"run": run, "tool_executions": tool_executions},
+                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or [])},
                 request=request,
             )
             return HttpResponse(html)
@@ -930,7 +957,7 @@ class HealthCheckView(View):
 
 # ── Workspace File Editor ─────────────────────────────────────────────────────
 
-ALLOWED_WORKSPACE_FILES = ["AGENTS.md", "SOUL.md", "HEARTBEAT.md"]
+ALLOWED_WORKSPACE_FILES = ["AGENTS.md", "SOUL.md"]
 
 
 class WorkspaceFileListView(View):
@@ -947,7 +974,11 @@ class WorkspaceFileListView(View):
                 "mtime": timezone.datetime.fromtimestamp(fpath.stat().st_mtime, tz=datetime.timezone.utc) if fpath.exists() else None,
                 "size": fpath.stat().st_size if fpath.exists() else 0,
             })
-        return render(request, self.template_name, {"files": files})
+        heartbeat_deprecated = (workspace_dir / "HEARTBEAT.md").exists()
+        return render(request, self.template_name, {
+            "files": files,
+            "heartbeat_deprecated": heartbeat_deprecated,
+        })
 
 
 class WorkspaceFileEditView(View):
@@ -1239,4 +1270,204 @@ class MCPServerDeleteView(View):
         if request.htmx:
             return HttpResponse(headers={"HX-Redirect": "/agent/mcp/"})
         return redirect("agent:mcp-list")
+
+
+# ── Workflow Views ─────────────────────────────────────────────────────────────
+
+
+class WorkflowListView(View):
+    template_name = "agent/workflow_list.html"
+
+    def get(self, request: HttpRequest) -> HttpResponse:
+        workflows = Workflow.objects.select_related("agent").order_by("name")
+        return render(request, self.template_name, {"workflows": workflows})
+
+
+class WorkflowDetailView(View):
+    template_name = "agent/workflow_detail.html"
+
+    def get(self, request: HttpRequest, pk: str) -> HttpResponse:
+        import yaml as _yaml
+        workflow = get_object_or_404(Workflow, pk=pk)
+        runs = (
+            AgentRun.objects.filter(workflow=workflow)
+            .select_related("agent")
+            .order_by("-created_at")[:50]
+        )
+        # Load YAML from file for the editor
+        yml_path = Path(settings.AGENT_WORKSPACE_DIR) / "workflows" / Path(workflow.filename).name
+        workflow_yaml = ""
+        if yml_path.exists():
+            workflow_yaml = yml_path.read_text(encoding="utf-8")
+        else:
+            workflow_yaml = _yaml.dump(workflow.definition, allow_unicode=True, default_flow_style=False)
+        return render(request, self.template_name, {
+            "workflow": workflow,
+            "runs": runs,
+            "workflow_yaml": workflow_yaml,
+        })
+
+
+class WorkflowToggleView(View):
+    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
+        from django_celery_beat.models import PeriodicTask
+
+        workflow = get_object_or_404(Workflow, pk=pk)
+        workflow.enabled = not workflow.enabled
+        workflow.save(update_fields=["enabled"])
+
+        if workflow.celery_beat_id:
+            PeriodicTask.objects.filter(pk=workflow.celery_beat_id).update(
+                enabled=workflow.enabled
+            )
+
+        if request.htmx:
+            return render(
+                request,
+                "agent/_workflow_toggle.html",
+                {"workflow": workflow},
+            )
+        return redirect("agent:workflow-list")
+
+
+class WorkflowRunNowView(View):
+    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
+        from agent.tasks import execute_workflow
+
+        workflow = get_object_or_404(Workflow, pk=pk)
+        execute_workflow.delay(str(workflow.pk))
+        if request.htmx:
+            return HttpResponse(
+                '<span class="text-green-400 text-sm">Queued ✓</span>',
+                headers={"HX-Trigger": "workflowRunQueued"},
+            )
+        return redirect("agent:workflow-detail", pk=pk)
+
+
+class WorkflowReloadView(View):
+    """POST /agent/workflows/reload/ — re-scan workflow YAML files."""
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        from agent.workflows.loader import WorkflowLoader
+
+        try:
+            loaded = WorkflowLoader().load_all()
+            msg = f"Reloaded {len(loaded)} workflow(s): {', '.join(loaded) or 'none'}"
+            status = 200
+        except Exception as exc:
+            msg = f"Reload failed: {exc}"
+            status = 500
+
+        if request.htmx:
+            return HttpResponse(
+                f'<span class="text-sm text-green-400">{msg}</span>',
+                status=status,
+            )
+        return redirect("agent:workflow-list")
+
+
+class WorkflowSaveView(View):
+    """POST /agent/workflows/<pk>/save/ — save edited YAML back to filesystem and reload."""
+
+    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
+        import yaml as _yaml
+        from agent.workflows.loader import WorkflowLoader
+
+        workflow = get_object_or_404(Workflow, pk=pk)
+        raw_yaml = request.POST.get("yaml_content", "")
+
+        # Validate YAML before writing
+        try:
+            _yaml.safe_load(raw_yaml)
+        except _yaml.YAMLError as exc:
+            if request.htmx:
+                return HttpResponse(
+                    f'<span class="text-red-400 text-sm">YAML error: {exc}</span>',
+                    status=400,
+                )
+            return redirect("agent:workflow-detail", pk=pk)
+
+        yml_path = Path(settings.AGENT_WORKSPACE_DIR) / "workflows" / Path(workflow.filename).name
+        yml_path.write_text(raw_yaml, encoding="utf-8")
+
+        try:
+            WorkflowLoader().load_all()
+        except Exception as exc:
+            logger.error("WorkflowSaveView reload error: %s", exc)
+
+        if request.htmx:
+            return HttpResponse(
+                '<span class="text-green-400 text-sm">Saved ✓</span>',
+            )
+        return redirect("agent:workflow-detail", pk=pk)
+
+
+class WorkflowCreateView(View):
+    """GET/POST /agent/workflows/create/ — create a new workflow YAML file."""
+
+    TEMPLATE = """name: {name}
+description: {description}
+agent: default
+enabled: true
+delivery: announce
+
+trigger:
+  cron: "0 9 * * 1"
+  timezone: UTC
+
+steps:
+  - name: step-1
+    prompt: >
+      Describe what this step should do.
+"""
+
+    def get(self, request: HttpRequest) -> HttpResponse:
+        return render(request, "agent/workflow_create.html", {
+            "template": self.TEMPLATE.format(name="my-workflow", description=""),
+        })
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        import yaml as _yaml
+        from agent.workflows.loader import WorkflowLoader
+
+        raw_yaml = request.POST.get("yaml_content", "")
+        try:
+            data = _yaml.safe_load(raw_yaml)
+        except _yaml.YAMLError as exc:
+            return render(request, "agent/workflow_create.html", {
+                "template": raw_yaml,
+                "error": f"YAML error: {exc}",
+            })
+
+        if not data or not isinstance(data, dict):
+            return render(request, "agent/workflow_create.html", {
+                "template": raw_yaml,
+                "error": "YAML must be a mapping.",
+            })
+
+        name = data.get("name", "").strip()
+        if not name:
+            return render(request, "agent/workflow_create.html", {
+                "template": raw_yaml,
+                "error": "Workflow must have a 'name' field.",
+            })
+
+        yml_path = Path(settings.AGENT_WORKSPACE_DIR) / "workflows" / f"{name}.yml"
+        if yml_path.exists():
+            return render(request, "agent/workflow_create.html", {
+                "template": raw_yaml,
+                "error": f"A workflow named '{name}' already exists.",
+            })
+
+        yml_path.write_text(raw_yaml, encoding="utf-8")
+
+        try:
+            WorkflowLoader().load_all()
+        except Exception as exc:
+            logger.error("WorkflowCreateView reload error: %s", exc)
+
+        workflow = Workflow.objects.filter(name=name).first()
+        if workflow:
+            return redirect("agent:workflow-detail", pk=workflow.pk)
+        return redirect("agent:workflow-list")
 

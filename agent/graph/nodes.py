@@ -37,15 +37,91 @@ def _truncate_history(history: list[dict], budget_tokens: int, model: str) -> li
     return history
 
 
-def _build_system_context(query: str) -> str:
-    """Assemble system prompt from workspace files, memories, and MCP resources."""
+def _build_skills_section(query: str) -> tuple[str, list[str]]:
+    """Scan workspace/skills/, match triggers against query, return section + triggered names."""
+    import yaml
+
+    skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
+    if not skills_dir.exists():
+        return "", []
+
+    query_lower = query.lower()
+    index_rows: list[str] = []
+    body_sections: list[str] = []
+    triggered: list[str] = []
+
+    for skill_dir in sorted(skills_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.exists():
+            continue
+        text = skill_md.read_text(encoding="utf-8")
+        meta: dict = {}
+        body = text
+        if text.startswith("---"):
+            raw_parts = text.split("---", 2)
+            if len(raw_parts) >= 3:
+                meta = yaml.safe_load(raw_parts[1]) or {}
+                body = raw_parts[2].strip()
+
+        name = meta.get("name", skill_dir.name)
+        description = meta.get("description", "")
+        triggers: list[str] = meta.get("triggers", [])
+
+        matched = any(t.lower() in query_lower for t in triggers) if triggers else False
+        status = "**Active**" if matched else "Available"
+        index_rows.append(f"| {name} | {description} | {status} |")
+
+        if matched:
+            triggered.append(name)
+            heading = f"### {name}"
+            if description:
+                heading += f"\n{description}"
+            body_sections.append(f"{heading}\n\n{body}")
+
+    if not index_rows:
+        return "", []
+
+    index = (
+        "## Skills\n\n"
+        "Full instructions are injected for skills relevant to this task.\n\n"
+        "| Skill | Description | Status |\n"
+        "|-------|-------------|--------|\n"
+        + "\n".join(index_rows)
+    )
+
+    if body_sections:
+        section = index + "\n\n---\n\n" + "\n\n---\n\n".join(body_sections)
+    else:
+        section = index
+
+    return section, triggered
+
+
+def _build_system_context(query: str) -> tuple[str, list[str]]:
+    """Assemble system prompt from workspace files, memories, and MCP resources.
+
+    Returns (system_prompt, triggered_skill_names).
+    """
+    from datetime import datetime
+    now = datetime.now().astimezone()
+    temporal_context = (
+        f"Current date and time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+        f"({now.strftime('%A')})"
+    )
+
     agents_md = _read_workspace_file("AGENTS.md")
     soul_md = _read_workspace_file("SOUL.md")
-    parts = []
+    parts = [temporal_context]
     if agents_md:
         parts.append(agents_md)
     if soul_md:
         parts.append(soul_md)
+
+    skills_section, triggered = _build_skills_section(query)
+    if skills_section:
+        parts.append(skills_section)
 
     try:
         from agent.memory.long_term import search_long_term
@@ -63,7 +139,8 @@ def _build_system_context(query: str) -> str:
     except Exception:
         pass
 
-    return "\n\n---\n\n".join(parts) if parts else "You are a helpful AI assistant."
+    content = "\n\n---\n\n".join(parts) if parts else "You are a helpful AI assistant."
+    return content, triggered
 
 
 def _get_agent_model(agent_id: str) -> str:
@@ -90,7 +167,7 @@ def call_llm(state: AgentState) -> dict:
     from agent.skills import registry as skill_registry
 
     model = _get_agent_model(state["agent_id"])
-    system_content = _build_system_context(state.get("input", ""))
+    system_content, triggered_skills = _build_system_context(state.get("input", ""))
 
     # Build message list
     messages: list[dict] = [{"role": "system", "content": system_content}]
@@ -136,11 +213,13 @@ def call_llm(state: AgentState) -> dict:
     except Exception:
         pass
 
-    # Fetch run object for LLMUsage tracking
+    # Fetch run object for LLMUsage tracking + triggered_skills
     _run_obj = None
     try:
         from agent.models import AgentRun
         _run_obj = AgentRun.objects.get(pk=state["run_id"])
+        if triggered_skills:
+            AgentRun.objects.filter(pk=state["run_id"]).update(triggered_skills=triggered_skills)
     except Exception:
         pass
 
@@ -380,7 +459,7 @@ def force_conclude(state: AgentState) -> dict:
     from agent.models import AgentRun
 
     model = _get_agent_model(state["agent_id"])
-    system_content = _build_system_context(state.get("input", ""))
+    system_content, _ = _build_system_context(state.get("input", ""))
 
     messages: list[dict] = [{"role": "system", "content": system_content}]
     if state.get("conversation_id"):

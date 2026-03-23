@@ -147,7 +147,8 @@ class MCPConnectionPool:
     async def _start_all_async(self) -> None:
         try:
             from agent.models import MCPServer
-            servers = MCPServer.objects.filter(enabled=True)
+            from asgiref.sync import sync_to_async
+            servers = await sync_to_async(lambda: list(MCPServer.objects.filter(enabled=True)))()
             for server in servers:
                 await self._start_server_async(server)
         except Exception as exc:

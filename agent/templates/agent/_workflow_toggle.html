@@ -1,0 +1,8 @@
+{% comment %}Inline toggle button for a workflow. Targets its own container.{% endcomment %}
+<button hx-post="{% url 'agent:workflow-toggle' workflow.pk %}"
+        hx-target="#toggle-{{ workflow.pk }}"
+        hx-swap="innerHTML"
+        class="text-xs px-2 py-1 rounded transition-colors
+               {% if workflow.enabled %}bg-green-900 text-green-300 hover:bg-green-800{% else %}bg-gray-700 text-gray-400 hover:bg-gray-600{% endif %}">
+  {% if workflow.enabled %}On{% else %}Off{% endif %}
+</button>

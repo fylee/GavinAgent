@@ -54,7 +54,16 @@ urlpatterns = [
     path("workspace/<str:filename>/", views.WorkspaceFileEditView.as_view(), name="workspace-file"),
 
     # Workspace file serving (charts, images)
-    path("workspace-file/<str:filename>", views.WorkspaceFileServeView.as_view(), name="workspace-file"),
+    path("workspace-file/<str:filename>", views.WorkspaceFileServeView.as_view(), name="workspace-serve"),
+
+    # Workflows
+    path("workflows/", views.WorkflowListView.as_view(), name="workflow-list"),
+    path("workflows/create/", views.WorkflowCreateView.as_view(), name="workflow-create"),
+    path("workflows/reload/", views.WorkflowReloadView.as_view(), name="workflow-reload"),
+    path("workflows/<uuid:pk>/", views.WorkflowDetailView.as_view(), name="workflow-detail"),
+    path("workflows/<uuid:pk>/toggle/", views.WorkflowToggleView.as_view(), name="workflow-toggle"),
+    path("workflows/<uuid:pk>/run-now/", views.WorkflowRunNowView.as_view(), name="workflow-run-now"),
+    path("workflows/<uuid:pk>/save/", views.WorkflowSaveView.as_view(), name="workflow-save"),
 
     # MCP Servers
     path("mcp/", views.MCPServerListView.as_view(), name="mcp-list"),

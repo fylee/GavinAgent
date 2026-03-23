@@ -1,0 +1,42 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}New Workflow{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+
+  <div class="flex items-center gap-3">
+    <a href="{% url 'agent:workflow-list' %}" class="text-gray-500 hover:text-gray-300 text-sm">← Workflows</a>
+  </div>
+  <h1 class="text-xl font-semibold text-white">New Workflow</h1>
+
+  {% if error %}
+  <div class="rounded-lg border border-red-700/40 bg-red-900/10 px-4 py-3 text-red-400 text-sm">
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+    <div class="space-y-4">
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">YAML definition</label>
+        <textarea name="yaml_content"
+                  rows="25"
+                  class="w-full font-mono text-xs text-gray-300 rounded-lg border border-white/10 p-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-y"
+                  style="background-color: #202123;">{{ template }}</textarea>
+      </div>
+      <div class="flex justify-end gap-3">
+        <a href="{% url 'agent:workflow-list' %}"
+           class="text-xs px-4 py-2 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
+          Cancel
+        </a>
+        <button type="submit"
+                class="text-xs px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
+          Create workflow
+        </button>
+      </div>
+    </div>
+  </form>
+
+</div>
+{% endblock %}

@@ -54,8 +54,11 @@ class ConversationListView(SidebarMixin, TemplateView):
 
 class ConversationCreateView(View):
     def post(self, request: HttpRequest) -> HttpResponse:
+        from agent.models import Agent
+        default_agent = Agent.objects.filter(is_default=True, is_active=True).first()
         conversation = Conversation.objects.create(
             interface=Conversation.Interface.WEB,
+            active_agent=default_agent,
         )
         url = reverse("chat:detail", kwargs={"pk": conversation.id})
         if request.htmx:
@@ -122,9 +125,11 @@ class MessageCreateView(View):
         )
 
         # Auto-title from first message
+        title_updated = False
         if not conversation.title:
             conversation.title = content[:60]
             conversation.save(update_fields=["title", "updated_at"])
+            title_updated = True
 
         # Only use regular chat processing when no agent is active.
         # Reload to get the active_agent FK (may have been set via toggle).
@@ -152,6 +157,14 @@ class MessageCreateView(View):
                 {"conversation": conversation, "user_msg_id": user_msg.id},
                 request=request,
             )
+            if title_updated:
+                title = conversation.title
+                html += (
+                    f'<span id="conversation-title" hx-swap-oob="true"'
+                    f' class="flex-1 text-sm font-medium text-gray-200 truncate">{title}</span>'
+                    f'<span id="sidebar-title-{conversation.id}" hx-swap-oob="true"'
+                    f' class="truncate">{title}</span>'
+                )
             return HttpResponse(html)
 
         return redirect("chat:detail", pk=conversation.id)
