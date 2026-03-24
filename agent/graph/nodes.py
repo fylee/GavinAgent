@@ -446,17 +446,19 @@ def execute_tools(state: AgentState) -> dict:
         tool_name = tc["name"]
         args = tc.get("arguments", {})
 
-        # Block duplicate web_read calls for the same URL
-        if tool_name == "web_read":
+        # Block duplicate URL fetches across ALL url-based tools (web_read, api_get, api_post).
+        # A URL already fetched by any tool should not be re-fetched by another.
+        if tool_name in ("web_read", "api_get", "api_post"):
             url = args.get("url", "")
-            if url in visited_urls:
+            if url and url in visited_urls:
                 tc_id = tc["id"]
                 tool_results.append({
                     "tool_call_id": tc_id,
-                    "result": {"error": f"Already read {url} — use the content from the previous call."},
+                    "result": {"error": f"Already fetched {url} — use the content from the previous call. Do not retry this URL with any tool."},
                 })
                 continue
-            visited_urls.append(url)
+            if url:
+                visited_urls.append(url)
 
         # Block retrying a tool call that already failed with the same arguments
         sig = f"{tool_name}|{_hashlib.md5(str(sorted(args.items())).encode()).hexdigest()}"

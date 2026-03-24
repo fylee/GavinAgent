@@ -36,6 +36,12 @@ class ApiGetTool(BaseTool):
             body = resp.text
             if len(body) > max_chars:
                 body = body[:max_chars] + "\n...[truncated]"
+            if resp.status_code >= 400:
+                return ToolResult(
+                    output=None,
+                    error=f"HTTP {resp.status_code}: {body[:500]}",
+                    duration_ms=int((time.monotonic() - start) * 1000),
+                )
             return ToolResult(
                 output={"status_code": resp.status_code, "body": body},
                 duration_ms=int((time.monotonic() - start) * 1000),
