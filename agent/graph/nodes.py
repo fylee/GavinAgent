@@ -179,6 +179,34 @@ def _get_agent_model(agent_id: str) -> str:
         return settings.LITELLM_DEFAULT_MODEL
 
 
+# Tools whose identity should be based on name + stable key arg only, not full args.
+# The LLM often rephrases free-text input between rounds, which produces a different
+# hash even though it's logically the same call.
+_NAME_ONLY_DEDUP_TOOLS: frozenset[str] = frozenset({
+    "run_skill",  # deduplicate by skill_name only (ignore the free-text input)
+    "chart",      # deduplicate by title only (ignore cosmetic differences in labels/values)
+})
+
+
+def _tool_sig(tool_name: str, args: dict) -> str:
+    """Return a stable dedup signature for a tool call.
+
+    For tools in _NAME_ONLY_DEDUP_TOOLS we use a reduced key so that minor
+    argument rephrasing by the LLM doesn't produce a different signature.
+    """
+    import hashlib as _h
+    import json as _j
+    if tool_name == "run_skill":
+        # Dedup on skill_name only — ignore the free-text input the LLM passes in.
+        key = {"skill_name": args.get("skill_name", "")}
+    elif tool_name == "chart":
+        # Dedup on title only — enough to prevent the same chart being re-generated.
+        key = {"title": args.get("title", "")}
+    else:
+        key = args
+    return f"{tool_name}|{_h.md5(_j.dumps(key, sort_keys=True).encode()).hexdigest()}"
+
+
 # ── nodes ──────────────────────────────────────────────────────────────────
 
 
@@ -398,8 +426,6 @@ def call_llm(state: AgentState) -> dict:
 
 def check_approval(state: AgentState) -> dict:
     """Check each pending tool call against its approval policy."""
-    import hashlib as _hashlib
-    import json as _json
     from agent.tools import get_tool
     from agent.tools.base import ApprovalPolicy
     from agent.models import AgentRun, ToolExecution
@@ -415,7 +441,7 @@ def check_approval(state: AgentState) -> dict:
     filtered_pending = []
     dropped_results = []
     for tc in pending:
-        sig = f"{tc['name']}|{_hashlib.md5(_json.dumps(tc.get('arguments', {}), sort_keys=True).encode()).hexdigest()}"
+        sig = _tool_sig(tc["name"], tc.get("arguments", {}))
         if sig in succeeded_sigs:
             dropped_results.append({
                 "tool_call_id": tc["id"],
@@ -555,7 +581,7 @@ def execute_tools(state: AgentState) -> dict:
                 visited_urls.append(url)
 
         # Block retrying a tool call that already failed with the same arguments
-        sig = f"{tool_name}|{_hashlib.md5(_json.dumps(args, sort_keys=True).encode()).hexdigest()}"
+        sig = _tool_sig(tool_name, args)
         if sig in failed_sigs:
             tc_id = tc["id"]
             tool_results.append({
