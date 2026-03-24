@@ -110,9 +110,48 @@ Steps:
 2. Split into chunks via the chunker
 3. Embed each chunk via `core.memory.embed_text()`
 4. Bulk-create `DocumentChunk` rows (delete old chunks first for re-ingest)
-5. Update `doc.chunk_count`
+5. Update `doc.chunk_count` and set `status = "ready"`
 
 Support **batch embedding** to reduce API calls: `litellm.embedding(input=[list_of_chunks])`.
+
+### 3a. Async ingestion via Celery
+
+Ingestion runs as a **Celery task** (`agent/rag/tasks.py`):
+
+```python
+@shared_task
+def ingest_document_task(document_id: str) -> None:
+    doc = KnowledgeDocument.objects.get(id=document_id)
+    doc.status = "processing"
+    doc.save(update_fields=["status"])
+    try:
+        ingest_document(doc)
+        doc.status = "ready"
+    except Exception as e:
+        doc.status = "error"
+        doc.metadata["error"] = str(e)
+    doc.save(update_fields=["status", "metadata"])
+```
+
+The `KnowledgeDocument` model gains a **`status`** field:
+
+```python
+status = models.CharField(
+    max_length=20,
+    choices=[
+        ("pending", "Pending"),
+        ("processing", "Processing"),
+        ("ready", "Ready"),
+        ("error", "Error"),
+    ],
+    default="pending",
+)
+```
+
+UI flow:
+- `KnowledgeCreateView` creates the document with `status="pending"` and dispatches `ingest_document_task.delay(doc.id)`
+- The document row shows a status badge (spinner for pending/processing, green for ready, red for error)
+- HTMX polls the row (`hx-trigger="every 2s"`) while status is `pending` or `processing`; stops polling once `ready` or `error`
 
 ### 4. File parsing
 
@@ -126,38 +165,62 @@ For the initial implementation, support:
 
 Add formats later (`.docx`, `.csv`, `.html`) as needed.
 
-### 5. Agent tool (`agent/tools/rag.py`)
+### 5. Automatic context injection (like skills)
+
+Knowledge chunks are **auto-injected into the system prompt** based on semantic
+similarity to the user's query — the same pattern used for skill routing
+(`_build_skills_section`).
+
+New function in `agent/rag/retriever.py`:
 
 ```python
-class KnowledgeSearchTool(BaseTool):
-    name = "knowledge_search"
-    description = (
-        "Search the knowledge base for relevant information. "
-        "Use this when the user asks about topics that may be covered "
-        "in uploaded documents, guides, specs, or reference material."
-    )
-    approval_policy = ApprovalPolicy.AUTO
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The search query to find relevant knowledge.",
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Max results to return (default 5).",
-            },
-        },
-        "required": ["query"],
-    }
+def retrieve_knowledge(query: str, limit: int = 5, threshold: float = 0.3) -> list[dict]:
+    """Return relevant knowledge chunks for the user query.
+
+    Returns list of {content, document_title, source_url, similarity}.
+    Only searches active documents with status='ready'.
+    """
 ```
 
-The tool:
-1. Embeds the query via `embed_text()`
-2. Queries `DocumentChunk` (only from `is_active` documents) ordered by `CosineDistance`
-3. Returns top-k results with chunk content + source document title + source URL
-4. Applies a similarity threshold (configurable, like `AGENT_SKILL_SIMILARITY_THRESHOLD`)
+Integration point — `_build_system_context()` in `agent/graph/nodes.py`:
+
+```python
+def _build_system_context(query: str, ...) -> str:
+    # ... existing system prompt, skills section ...
+
+    # Knowledge base context (auto-injected)
+    knowledge_section = _build_knowledge_section(query)
+    if knowledge_section:
+        parts.append(knowledge_section)
+```
+
+New helper `_build_knowledge_section(query)` in `nodes.py`:
+
+1. Calls `retrieve_knowledge(query)` with configured threshold and limit
+2. If matches found, formats them as a system prompt section:
+
+```
+## Reference Knowledge
+
+The following excerpts from your knowledge base are relevant to this query.
+Use them to ground your answer. Cite the source when appropriate.
+
+### From: {document_title}
+{chunk_content}
+
+### From: {document_title}
+{chunk_content}
+```
+
+3. If no matches above threshold → section is omitted (no noise)
+
+This is **selective** — only chunks that semantically match the query are injected,
+just like how only relevant skills are promoted to "Active" and have their full
+body injected.
+
+The `knowledge_search` tool is **not needed** in this approach. The agent doesn't
+need to decide when to search — relevant knowledge is always available in context
+when it's relevant.
 
 ### 6. Management command (`agent/management/commands/ingest_documents.py`)
 
@@ -231,18 +294,24 @@ Add "Knowledge" link to the agent sidebar nav (in `base_agent.html`), between
 - [ ] User can upload a `.md`, `.txt`, or `.pdf` file and it appears in the Knowledge Base list
 - [ ] User can paste a URL and the page content is fetched, chunked, and embedded
 - [ ] User can paste raw text and it is chunked and embedded
-- [ ] Agent can call `knowledge_search` tool and receives relevant chunks with source attribution
-- [ ] Chunks from inactive documents are excluded from search results
+- [ ] Ingestion runs asynchronously via Celery; document status updates from `pending` → `processing` → `ready`
+- [ ] UI shows real-time status with HTMX polling during ingestion
+- [ ] Relevant knowledge chunks are automatically injected into the agent's system prompt based on query similarity
+- [ ] Chunks from inactive documents or documents not in `ready` status are excluded
 - [ ] Deleting a document cascades to its chunks
 - [ ] `ingest_documents` management command re-embeds all or a specific document
 - [ ] Knowledge Base page is accessible from the agent sidebar
 - [ ] All operations work via HTMX without full page reloads
 
+## Resolved Questions
+
+1. **Async ingestion** — ✅ Yes, via Celery task. Document has a `status` field (`pending` → `processing` → `ready` / `error`). UI polls status via HTMX.
+2. **Chunk size tuning** — ✅ 500 tokens default, configurable via `RAG_CHUNK_SIZE_TOKENS` setting.
+3. **Automatic context injection** — ✅ Auto-injected into system prompt via embedding similarity (same pattern as skill routing). No explicit `knowledge_search` tool needed. Only chunks above `RAG_SIMILARITY_THRESHOLD` are injected.
+
 ## Open Questions
 
-1. **Should ingestion be async (Celery task)?** — For small documents (<50 pages), synchronous is fine. For large PDFs, a Celery task with progress polling would be better. Start synchronous, add async later if needed.
-2. **Chunk size tuning** — 500 tokens is a reasonable default. May need adjustment based on retrieval quality. Make it configurable via settings.
-3. **Automatic context injection vs. tool call** — Should relevant knowledge be automatically injected into the system prompt (like skills), or only retrieved when the agent explicitly calls `knowledge_search`? Start with tool-only; consider auto-injection later based on usage patterns.
+_None at this time._
 
 ## Implementation Notes
 
