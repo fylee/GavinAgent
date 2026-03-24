@@ -2,6 +2,7 @@
 name: weather
 description: Get current weather and today's forecast for one or more cities. Returns temperature, conditions, wind, humidity, and UV index. Always use this skill instead of web_read for weather queries.
 approval_required: false
+tools: [run_skill]
 examples:
   - "what's the weather in Taipei?"
   - "current temperature in Tokyo"

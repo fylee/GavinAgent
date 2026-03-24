@@ -298,14 +298,33 @@ def call_llm(state: AgentState) -> dict:
             for name, t in all_builtin.items()
             if name in enabled_tools
         ]
-        # Always include run_skill when there are triggered skills with handlers,
-        # even if not explicitly listed in agent enabled_tools.
-        if "run_skill" not in enabled_tools and "run_skill" in all_builtin:
-            triggered = [s for s in (triggered_skills or [])]
+        # Auto-inject tools declared as required by triggered skills but absent
+        # from the agent's enabled_tools list.
+        if triggered_skills:
+            import yaml as _yaml
             skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
-            has_handler = any((skills_dir / s / "handler.py").exists() for s in triggered)
-            if has_handler:
-                tools_schema.append(all_builtin["run_skill"].to_llm_schema())
+            auto_inject: set[str] = set()
+            for skill_name in triggered_skills:
+                skill_md = skills_dir / skill_name / "SKILL.md"
+                if skill_md.exists():
+                    try:
+                        raw = skill_md.read_text(encoding="utf-8")
+                        if raw.startswith("---"):
+                            parts = raw.split("---", 2)
+                            if len(parts) >= 3:
+                                meta = _yaml.safe_load(parts[1]) or {}
+                                for t in meta.get("tools", []):
+                                    if t not in enabled_tools:
+                                        auto_inject.add(t)
+                    except Exception:
+                        pass
+                # run_skill is always needed when a handler exists
+                if (skills_dir / skill_name / "handler.py").exists():
+                    if "run_skill" not in enabled_tools:
+                        auto_inject.add("run_skill")
+            for tool_name in auto_inject:
+                if tool_name in all_builtin:
+                    tools_schema.append(all_builtin[tool_name].to_llm_schema())
     else:
         tools_schema = []
 

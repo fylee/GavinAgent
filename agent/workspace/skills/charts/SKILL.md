@@ -2,6 +2,7 @@
 name: charts
 description: Generating charts and data visualisations
 triggers: [chart, graph, plot, visuali, bar chart, pie chart, line chart, scatter]
+tools: [chart]
 version: 1
 ---
 
