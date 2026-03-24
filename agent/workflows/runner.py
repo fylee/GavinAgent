@@ -127,8 +127,8 @@ class WorkflowRunner:
         workflow.last_run_at = timezone.now()
         workflow.save(update_fields=["last_run_at"])
 
-        if previous_output:
-            _deliver(workflow, previous_output)
+        # Delivery is now handled inside save_result (agent/graph/nodes.py) for each
+        # individual step run, so we don't deliver again here to avoid duplicates.
 
         # One-shot: disable after running
         if workflow.definition.get("trigger", {}).get("at"):

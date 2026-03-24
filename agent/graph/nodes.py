@@ -811,7 +811,7 @@ def save_result(state: AgentState) -> dict:
     from agent.models import AgentRun
 
     output = state.get("output", "")
-    run = AgentRun.objects.get(pk=state["run_id"])
+    run = AgentRun.objects.select_related("workflow").get(pk=state["run_id"])
 
     # Don't overwrite a cancellation — if already FAILED, leave it as-is.
     if run.status == AgentRun.Status.FAILED:
@@ -828,5 +828,18 @@ def save_result(state: AgentState) -> dict:
     run.status = AgentRun.Status.COMPLETED
     run.finished_at = timezone.now()
     run.save(update_fields=["output", "status", "finished_at"])
+
+    # For workflow runs: deliver the output via the workflow's delivery config,
+    # but only for the LAST step. WorkflowRunner sets workflow_step as 0-based index.
+    if output and run.workflow_id and run.trigger_source == AgentRun.TriggerSource.WORKFLOW:
+        try:
+            workflow = run.workflow
+            total_steps = len(workflow.definition.get("steps", []))
+            is_last_step = (run.workflow_step == total_steps - 1) if total_steps else True
+            if is_last_step:
+                from agent.workflows.runner import _deliver
+                _deliver(workflow, output)
+        except Exception as exc:
+            logger.warning("save_result: workflow delivery failed for run %s: %s", run.pk, exc)
 
     return {}
