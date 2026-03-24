@@ -38,6 +38,9 @@ Thumbs.db
 htmlcov/
 .pytest_cache/
 
+# Third-party / vendored repos
+self-hosted-ai-starter-kit/
+
 # Workspace runtime files (keep examples and configs, ignore outputs)
 agent/workspace/HEARTBEAT.md
 agent/workspace/memory/
