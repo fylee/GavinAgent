@@ -167,6 +167,17 @@ def _build_system_context(query: str) -> tuple[str, list[str]]:
         pass
 
     content = "\n\n---\n\n".join(parts) if parts else "You are a helpful AI assistant."
+
+    # Always append the tool-output formatting rule so the LLM never paraphrases
+    # markdown fields (e.g. chart image syntax) returned by tools.
+    content += (
+        "\n\n---\n\n"
+        "## Tool output formatting rule\n\n"
+        "When a tool result contains a `markdown` field, you MUST copy that value "
+        "verbatim into your reply. Never describe or paraphrase it — reproduce it exactly "
+        "as-is so that images and links render correctly."
+    )
+
     return content, triggered
 
 
@@ -701,6 +712,18 @@ def force_conclude(state: AgentState) -> dict:
     model = _get_agent_model(state["agent_id"])
     system_content, _ = _build_system_context(state.get("input", ""))
 
+    # Collect any markdown-bearing results (e.g. chart images) so they are
+    # always preserved verbatim regardless of what the LLM does with them.
+    tool_results = state.get("tool_results", [])
+    markdown_snippets: list[str] = []
+    for tr in tool_results:
+        result = tr.get("result", {})
+        output = result.get("output", {})
+        if isinstance(output, dict):
+            md = output.get("markdown")
+            if md:
+                markdown_snippets.append(md)
+
     messages: list[dict] = [{"role": "system", "content": system_content}]
     if state.get("conversation_id"):
         from chat.models import Message as ChatMessage
@@ -716,7 +739,6 @@ def force_conclude(state: AgentState) -> dict:
         messages.append({"role": "user", "content": state["input"]})
 
     # Inject the last round's tool exchange so the LLM knows what was accomplished.
-    tool_results = state.get("tool_results", [])
     assistant_tool_msg = state.get("assistant_tool_call_message")
     if tool_results and assistant_tool_msg:
         required_ids = {tc["id"] for tc in assistant_tool_msg.get("tool_calls", [])}
@@ -731,12 +753,22 @@ def force_conclude(state: AgentState) -> dict:
                     "content": json.dumps(tr["result"]),
                 })
 
+    # Tell the LLM to include any markdown verbatim (e.g. chart image syntax).
+    markdown_instruction = ""
+    if markdown_snippets:
+        verbatim = "\n".join(markdown_snippets)
+        markdown_instruction = (
+            f"\n\nIMPORTANT: Your response MUST include the following markdown verbatim "
+            f"(do not paraphrase or describe it — copy it exactly):\n\n{verbatim}"
+        )
+
     messages.append({
         "role": "user",
         "content": (
             "All required tools have already run successfully. "
             "Using the results above, compose your final answer now. "
             "Do not call any more tools."
+            + markdown_instruction
         ),
     })
 
