@@ -112,8 +112,23 @@ class RunCreateView(View):
             return HttpResponse("agent_id and input are required", status=400)
 
         agent = get_object_or_404(Agent, pk=agent_id, is_active=True)
+
+        # Create a Chat conversation so the result is visible in the Chat sidebar.
+        from chat.models import Conversation, Message as ChatMessage
+        conversation = Conversation.objects.create(
+            interface=Conversation.Interface.WEB,
+            active_agent=agent,
+            title=input_text[:60],
+        )
+        ChatMessage.objects.create(
+            conversation=conversation,
+            role=ChatMessage.Role.USER,
+            content=input_text,
+        )
+
         run = AgentRun.objects.create(
             agent=agent,
+            conversation=conversation,
             trigger_source=AgentRun.TriggerSource.WEB,
             input=input_text,
         )
