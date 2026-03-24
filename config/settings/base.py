@@ -69,7 +69,9 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+# Agent timezone — used for system prompt datetime and default workflow cron timezone
+# TIME_ZONE is set to match so that Django's |localtime filter uses the same zone.
+TIME_ZONE = config("AGENT_TIMEZONE", default="UTC")
 USE_I18N = True
 USE_TZ = True
 
@@ -102,12 +104,12 @@ AVAILABLE_MODELS = [
 
 # Agent workspace
 AGENT_WORKSPACE_DIR = config(
+AGENT_WORKSPACE_DIR = config(
     "AGENT_WORKSPACE_DIR", default=str(BASE_DIR / "agent" / "workspace")
 )
 
-# Agent timezone — used for system prompt datetime and default workflow cron timezone
-# Use any IANA timezone name: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
-AGENT_TIMEZONE = config("AGENT_TIMEZONE", default="UTC")
+# Agent timezone — configured once above as TIME_ZONE (also consumed by Django's |localtime).
+AGENT_TIMEZONE = TIME_ZONE
 
 # Skill similarity threshold for embedding-based routing (0.0–1.0, higher = stricter)
 AGENT_SKILL_SIMILARITY_THRESHOLD = config(

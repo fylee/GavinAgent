@@ -111,7 +111,7 @@
           </svg>
         </div>
         <div class="flex-1 min-w-0 pt-0.5">
-          <p class="text-[11px] text-gray-500 mb-1">{{ msg.created_at|date:"Y-m-d H:i" }}</p>
+          <p class="text-[11px] text-gray-500 mb-1">{{ msg.created_at|localtime|date:"Y-m-d H:i" }}</p>
           {{ msg.content|json_script:msg.id }}
           <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed md-content"
                data-markdown
