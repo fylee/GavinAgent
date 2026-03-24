@@ -19,4 +19,5 @@ urlpatterns = [
         name="message-stream",
     ),
     path("scheduled/<uuid:pk>/", views.WorkflowOutputView.as_view(), name="workflow-output"),
+    path("scheduled/<uuid:pk>/poll/", views.WorkflowOutputPollView.as_view(), name="workflow-output-poll"),
 ]

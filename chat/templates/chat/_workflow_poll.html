@@ -1,0 +1,49 @@
+{% load i18n %}{% comment %}
+Poll partial for the workflow output page.
+Rendered by WorkflowOutputPollView and swapped into #wf-poll-anchor via HTMX.
+
+If there are new messages: renders them + a new anchor pointing after the last one.
+If a run is active (no new messages yet): re-renders itself to keep polling.
+If nothing is happening: renders an invisible anchor that stops polling.
+{% endcomment %}{% for msg in new_messages %}
+<div class="flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full" id="msg-{{ msg.id }}"
+     hx-swap-oob="beforebegin:#wf-poll-anchor">
+  <div class="flex-shrink-0 w-7 h-7 rounded-full bg-indigo-700 flex items-center justify-center mt-0.5">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+    </svg>
+  </div>
+  <div class="flex-1 min-w-0 pt-0.5">
+    <p class="text-[11px] text-gray-500 mb-1">{{ msg.created_at|date:"Y-m-d H:i" }}</p>
+    {{ msg.content|json_script:msg.id }}
+    <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed md-content"
+         data-markdown
+         data-src-id="{{ msg.id }}"></div>
+  </div>
+</div>
+{% endfor %}{% with last_id=new_messages|last %}{% if new_messages %}
+{# New anchor pointing past the last new message — keep polling if run still active #}
+<div id="wf-poll-anchor"
+  {% if active_run %}
+  hx-get="{% url 'chat:workflow-output-poll' pk=workflow.pk %}?after_id={{ last_id.id }}"
+  hx-trigger="every 3s"
+  hx-target="#wf-poll-anchor"
+  hx-swap="outerHTML"
+  {% endif %}
+></div>
+{% elif active_run %}
+{# No new messages yet but run is active — keep polling with same anchor #}
+<div id="wf-poll-anchor"
+  hx-get="{% url 'chat:workflow-output-poll' pk=workflow.pk %}?after_id={{ after_id }}"
+  hx-trigger="every 3s"
+  hx-target="#wf-poll-anchor"
+  hx-swap="outerHTML"
+>
+  <div class="flex justify-center py-4">
+    <span class="text-xs text-gray-500 animate-pulse">Running…</span>
+  </div>
+</div>
+{% else %}
+{# Idle — no active run, no new messages. Stop polling. #}
+<div id="wf-poll-anchor"></div>
+{% endif %}{% endwith %}

@@ -261,13 +261,17 @@ class WorkflowOutputView(SidebarMixin, View):
         import yaml as _yaml
         from pathlib import Path
         from django.conf import settings
-        from agent.models import Workflow
+        from agent.models import Workflow, AgentRun as _AgentRun
 
         workflow = get_object_or_404(Workflow, pk=pk)
         output_messages = (
             Message.objects.filter(metadata__workflow_id=str(pk))
             .order_by("created_at")
         )
+        active_run = _AgentRun.objects.filter(
+            workflow=workflow,
+            status__in=[_AgentRun.Status.PENDING, _AgentRun.Status.RUNNING, _AgentRun.Status.WAITING],
+        ).first()
 
         yml_path = Path(settings.AGENT_WORKSPACE_DIR) / "workflows" / Path(workflow.filename).name
         if yml_path.exists():
@@ -278,11 +282,54 @@ class WorkflowOutputView(SidebarMixin, View):
         ctx = {
             "workflow": workflow,
             "output_messages": output_messages,
+            "active_run": active_run,
             "current_workflow_id": str(pk),
             "workflow_yaml": workflow_yaml,
         }
         ctx.update(self.get_sidebar_context())
         return render(request, self.template_name, ctx)
+
+
+class WorkflowOutputPollView(View):
+    """HTMX poll endpoint: returns new workflow output messages since a given message id.
+    Used by the workflow output page to live-update as runs complete.
+    """
+
+    def get(self, request: HttpRequest, pk: str) -> HttpResponse:
+        from agent.models import Workflow, AgentRun
+        workflow = get_object_or_404(Workflow, pk=pk)
+        after_id = request.GET.get("after_id", "")
+
+        # Determine if a run is currently active for this workflow
+        active_run = AgentRun.objects.filter(
+            workflow=workflow,
+            status__in=[AgentRun.Status.PENDING, AgentRun.Status.RUNNING, AgentRun.Status.WAITING],
+        ).first()
+
+        new_messages: list[Message] = []
+        if after_id:
+            try:
+                anchor = Message.objects.get(pk=after_id)
+                new_messages = list(
+                    Message.objects.filter(
+                        metadata__workflow_id=str(pk),
+                        created_at__gt=anchor.created_at,
+                    ).order_by("created_at")
+                )
+            except Message.DoesNotExist:
+                pass
+
+        html = render_to_string(
+            "chat/_workflow_poll.html",
+            {
+                "new_messages": new_messages,
+                "workflow": workflow,
+                "after_id": after_id,
+                "active_run": active_run,
+            },
+            request=request,
+        )
+        return HttpResponse(html)
 
 
 class ConversationAgentToggleView(View):

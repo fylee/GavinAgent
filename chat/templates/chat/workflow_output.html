@@ -132,6 +132,18 @@
     </div>
     {% endif %}
 
+    {# Live-update anchor: polls for new messages while a run is active #}
+    {% with last_msg=output_messages.last %}
+    <div id="wf-poll-anchor"
+      {% if active_run %}
+      hx-get="{% url 'chat:workflow-output-poll' pk=workflow.pk %}?after_id={% if last_msg %}{{ last_msg.id }}{% endif %}"
+      hx-trigger="every 3s"
+      hx-target="#wf-poll-anchor"
+      hx-swap="outerHTML"
+      {% endif %}
+    ></div>
+    {% endwith %}
+
   </div>
 
   {# Read-only footer — no input bar #}
@@ -171,6 +183,13 @@
     });
   }
   renderMarkdown();
+
+  // Re-render markdown and scroll down whenever HTMX swaps in new workflow messages
+  document.body.addEventListener('htmx:afterSwap', function(e) {
+    renderMarkdown();
+    var msgList = document.getElementById('message-list');
+    if (msgList) msgList.scrollTop = msgList.scrollHeight;
+  });
 })();
 </script>
 {% endblock %}
