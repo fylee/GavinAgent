@@ -228,7 +228,14 @@
 
   function renderMarkdown() {
     document.querySelectorAll('[data-markdown]:not([data-rendered])').forEach(function (el) {
-      var src = el.dataset.content !== undefined ? el.dataset.content : el.textContent;
+      var srcId = el.dataset.srcId;
+      var src;
+      if (srcId) {
+        var scriptEl = document.getElementById(srcId);
+        src = scriptEl ? JSON.parse(scriptEl.textContent) : el.textContent;
+      } else {
+        src = el.textContent;
+      }
       el.innerHTML = marked.parse(src);
       el.dataset.rendered = '1';
     });
