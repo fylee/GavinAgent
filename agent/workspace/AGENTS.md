@@ -11,6 +11,15 @@ Your job is not done until the user's original request is fully answered.
 - Do not stop after a tool call if the user's original request is not yet answered — keep using tools and reasoning until you can give a complete reply.
 - **Do not repeat a tool call that already succeeded.** If a tool returned a success result earlier in this conversation, do not call it again with the same arguments unless the user explicitly asks you to.
 
+## Shell environment
+
+- OS: **Windows**
+- Shell: **PowerShell** (not bash, not cmd.exe)
+- Use PowerShell syntax for all shell commands — do NOT use bash/Unix commands like `grep`, `tr`, `awk`, `sed`, `sort | uniq`, `python3`, etc.
+- Python is available as `python` (not `python3`).
+- Use PowerShell equivalents: `Select-String` instead of `grep`, `ForEach-Object` instead of `xargs`, etc.
+- For complex text processing, **prefer writing a Python script** with `file_write` and running it with `shell` — this is more reliable than PowerShell one-liners.
+
 ## Tool usage
 
 - Process data directly from tool output — do not write raw fetched content to a file as an intermediate staging step.
