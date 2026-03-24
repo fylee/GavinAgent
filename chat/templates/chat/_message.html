@@ -26,7 +26,7 @@
     </div>
     {% endif %}
     {{ message.content|json_script:message.id }}
-    <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2"
+    <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed md-content"
          data-markdown
          data-src-id="{{ message.id }}"></div>
     {% if message.model %}

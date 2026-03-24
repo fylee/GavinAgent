@@ -8,6 +8,15 @@
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    .md-content img {
+      max-width: 100%;
+      border-radius: 0.5rem;
+      margin-top: 0.5rem;
+      margin-bottom: 0.5rem;
+      display: block;
+    }
+  </style>
   {% block extra_head %}{% endblock %}
 </head>
 <body class="h-full flex overflow-hidden"
