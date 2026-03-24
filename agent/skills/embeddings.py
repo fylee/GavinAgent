@@ -16,7 +16,7 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-SIMILARITY_THRESHOLD = getattr(settings, "AGENT_SKILL_SIMILARITY_THRESHOLD", 0.35)
+SIMILARITY_THRESHOLD = getattr(settings, "AGENT_SKILL_SIMILARITY_THRESHOLD", 0.55)
 EMBED_TEXT_MAX_CHARS = 500
 
 
