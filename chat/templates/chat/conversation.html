@@ -226,6 +226,8 @@
     });
   }
 
+  marked.use({ baseUrl: window.location.origin + '/' });
+
   function renderMarkdown() {
     document.querySelectorAll('[data-markdown]:not([data-rendered])').forEach(function (el) {
       var srcId = el.dataset.srcId;
