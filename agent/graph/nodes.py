@@ -193,6 +193,17 @@ def call_llm(state: AgentState) -> dict:
     from agent.tools import all_tools
     from agent.skills import registry as skill_registry
 
+    # Cancellation check — if the run was marked FAILED (e.g. by Cancel Run button)
+    # while the Celery task was in-flight, abort here before calling the LLM.
+    try:
+        from agent.models import AgentRun as _AgentRun
+        _current = _AgentRun.objects.filter(pk=state["run_id"]).values_list("status", flat=True).first()
+        if _current == _AgentRun.Status.FAILED:
+            logger.info("AgentRun %s cancelled — aborting call_llm", state["run_id"])
+            return {"output": "", "pending_tool_calls": []}
+    except Exception:
+        pass
+
     model = _get_agent_model(state["agent_id"])
     system_content, triggered_skills = _build_system_context(state.get("input", ""))
 
@@ -287,6 +298,14 @@ def call_llm(state: AgentState) -> dict:
             for name, t in all_builtin.items()
             if name in enabled_tools
         ]
+        # Always include run_skill when there are triggered skills with handlers,
+        # even if not explicitly listed in agent enabled_tools.
+        if "run_skill" not in enabled_tools and "run_skill" in all_builtin:
+            triggered = [s for s in (triggered_skills or [])]
+            skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
+            has_handler = any((skills_dir / s / "handler.py").exists() for s in triggered)
+            if has_handler:
+                tools_schema.append(all_builtin["run_skill"].to_llm_schema())
     else:
         tools_schema = []
 
@@ -434,6 +453,15 @@ def execute_tools(state: AgentState) -> dict:
     from agent.tools import get_tool
     from agent.tools.base import ToolTimeoutError
     from agent.models import AgentRun, ToolExecution
+
+    # Cancellation check — abort before running any tools if run was cancelled.
+    try:
+        _status = AgentRun.objects.filter(pk=state["run_id"]).values_list("status", flat=True).first()
+        if _status == AgentRun.Status.FAILED:
+            logger.info("AgentRun %s cancelled — aborting execute_tools", state["run_id"])
+            return {"tool_results": [], "pending_tool_calls": [], "tool_call_rounds": state.get("tool_call_rounds", 0) + 1, "visited_urls": list(state.get("visited_urls") or []), "failed_tool_signatures": list(state.get("failed_tool_signatures") or [])}
+    except Exception:
+        pass
 
     import hashlib as _hashlib
 
@@ -616,7 +644,11 @@ def save_result(state: AgentState) -> dict:
     output = state.get("output", "")
     run = AgentRun.objects.get(pk=state["run_id"])
 
-    if state.get("conversation_id"):
+    # Don't overwrite a cancellation — if already FAILED, leave it as-is.
+    if run.status == AgentRun.Status.FAILED:
+        return {}
+
+    if output and state.get("conversation_id"):
         ChatMessage.objects.create(
             conversation_id=state["conversation_id"],
             role=ChatMessage.Role.ASSISTANT,
