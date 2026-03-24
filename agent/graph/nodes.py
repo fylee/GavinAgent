@@ -498,10 +498,15 @@ def check_approval(state: AgentState) -> dict:
     needs_approval = []
     auto_execute = []
 
+    # Workflow runs are unattended — auto-approve everything.
+    workflow_run = run.trigger_source == AgentRun.TriggerSource.WORKFLOW
+
     for tc in pending:
         tool_name = tc["name"]
         tool = get_tool(tool_name)
-        if tool is not None:
+        if workflow_run:
+            requires = False  # all tools auto-approved in workflow context
+        elif tool is not None:
             # Allow per-call approval logic (e.g. file_write only requires approval for workflows/)
             if hasattr(tool, "requires_approval_for"):
                 requires = tool.requires_approval_for(tc.get("arguments", {}))
