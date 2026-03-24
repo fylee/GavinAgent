@@ -29,9 +29,10 @@ def _after_check_approval(state: AgentState) -> str:
     if state.get("waiting_for_approval"):
         return END  # pause until human approves
     if not state.get("pending_tool_calls"):
-        # All tool calls were pre-filtered (already succeeded/failed) — skip execute_tools
-        # and go straight to call_llm so the LLM sees the "already completed" responses.
-        return "call_llm"
+        # All tool calls were pre-filtered (already succeeded/failed) —
+        # jump straight to force_conclude so the LLM is asked to conclude
+        # without tools, preventing an infinite re-request loop.
+        return "force_conclude"
     return "execute_tools"
 
 
@@ -67,7 +68,7 @@ def build_graph() -> Any:
     graph.add_conditional_edges(
         "check_approval",
         _after_check_approval,
-        {"execute_tools": "execute_tools", "call_llm": "call_llm", END: END},
+        {"execute_tools": "execute_tools", "force_conclude": "force_conclude", END: END},
     )
     graph.add_conditional_edges(
         "execute_tools",

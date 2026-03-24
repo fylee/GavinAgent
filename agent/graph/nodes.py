@@ -455,11 +455,13 @@ def check_approval(state: AgentState) -> dict:
         else:
             filtered_pending.append(tc)
 
-    # If ALL calls were dropped, skip execution entirely and feed results back to LLM.
+    # If ALL calls were dropped, force conclusion — do not give the LLM another
+    # chance to issue tool calls, it will just loop. Route to force_conclude instead.
     if dropped_results and not filtered_pending:
         return {
             "pending_tool_calls": [],
             "tool_results": dropped_results,
+            "tool_call_rounds": state.get("tool_call_rounds", 0) + 100,  # trigger force_conclude
             "waiting_for_approval": False,
         }
 
@@ -691,7 +693,8 @@ def execute_tools(state: AgentState) -> dict:
 
 
 def force_conclude(state: AgentState) -> dict:
-    """Called when tool_call_rounds hits the limit. Ask the LLM to conclude with what it has."""
+    """Called when tool_call_rounds hits the limit, or when all tool calls were
+    already-completed duplicates. Ask the LLM to conclude with what it has."""
     from core.llm import get_completion
     from agent.models import AgentRun
 
@@ -712,13 +715,28 @@ def force_conclude(state: AgentState) -> dict:
     else:
         messages.append({"role": "user", "content": state["input"]})
 
+    # Inject the last round's tool exchange so the LLM knows what was accomplished.
+    tool_results = state.get("tool_results", [])
+    assistant_tool_msg = state.get("assistant_tool_call_message")
+    if tool_results and assistant_tool_msg:
+        required_ids = {tc["id"] for tc in assistant_tool_msg.get("tool_calls", [])}
+        result_ids = {tr["tool_call_id"] for tr in tool_results}
+        if required_ids and required_ids.issubset(result_ids):
+            current_results = [tr for tr in tool_results if tr["tool_call_id"] in required_ids]
+            messages.append(assistant_tool_msg)
+            for tr in current_results:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tr["tool_call_id"],
+                    "content": json.dumps(tr["result"]),
+                })
+
     messages.append({
         "role": "user",
         "content": (
-            "You have reached the maximum number of tool-use rounds. "
-            "Based on all the information you have collected so far, "
-            "provide the best possible answer to the original request. "
-            "If data is incomplete, state what you found and what is missing."
+            "All required tools have already run successfully. "
+            "Using the results above, compose your final answer now. "
+            "Do not call any more tools."
         ),
     })
 
