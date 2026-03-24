@@ -25,14 +25,13 @@ steps:
   - name: character-chart
     prompt: >
       You are given the previous step output which contains a joke (setup and punchline).
-      Do the following:
+      Do the following — use ONLY the tools listed, no shell commands:
 
-      1. Extract only the joke text (setup + punchline combined).
-      2. Count how many times each English letter a-z appears (case-insensitive, ignore
-         spaces, punctuation, and any non-letter characters).
-      3. Build two parallel arrays — one for the 26 letters ["a","b","c",...,"z"] and
-         one for their counts — only include letters that appear at least once.
-         Sort them alphabetically by letter.
+      1. Extract only the joke text (setup + punchline combined) as a plain string.
+      2. Use the shell tool to run this exact Python one-liner (replace JOKE_TEXT with the actual joke,
+         escaping any single quotes by replacing them with spaces):
+         python -c "import json; t='JOKE_TEXT'; counts={}; [counts.__setitem__(c, counts.get(c,0)+1) for c in t.lower() if c.isalpha()]; pairs=sorted(counts.items()); print(json.dumps({'labels':[p[0] for p in pairs],'values':[p[1] for p in pairs]}))"
+      3. Parse the JSON output to get labels and values arrays.
       4. Call the chart tool with chart_type="bar", those labels and values,
          and title="Letter Frequency in Today's Joke".
       5. Return the full previous step output followed by the chart markdown image.

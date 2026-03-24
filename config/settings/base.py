@@ -104,7 +104,6 @@ AVAILABLE_MODELS = [
 
 # Agent workspace
 AGENT_WORKSPACE_DIR = config(
-AGENT_WORKSPACE_DIR = config(
     "AGENT_WORKSPACE_DIR", default=str(BASE_DIR / "agent" / "workspace")
 )
 
