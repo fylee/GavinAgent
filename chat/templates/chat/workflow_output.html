@@ -112,8 +112,9 @@
         </div>
         <div class="flex-1 min-w-0 pt-0.5">
           <p class="text-[11px] text-gray-500 mb-1">{{ msg.created_at|date:"Y-m-d H:i" }}</p>
-          <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed"
-               data-markdown>{{ msg.content }}</div>
+          <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2"
+               data-markdown
+               data-content="{{ msg.content|escapejs }}"></div>
         </div>
       </div>
       {% endfor %}
@@ -147,7 +148,8 @@
 
   function renderMarkdown() {
     document.querySelectorAll('[data-markdown]:not([data-rendered])').forEach(function (el) {
-      el.innerHTML = marked.parse(el.textContent);
+      var src = el.dataset.content !== undefined ? el.dataset.content : el.textContent;
+      el.innerHTML = marked.parse(src);
       el.dataset.rendered = '1';
     });
   }

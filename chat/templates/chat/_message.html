@@ -25,8 +25,9 @@
       <span class="text-[11px] text-gray-500">{{ message.created_at|date:"Y-m-d H:i" }}</span>
     </div>
     {% endif %}
-    <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed"
-         data-markdown>{{ message.content }}</div>
+    <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2"
+         data-markdown
+         data-content="{{ message.content|escapejs }}"></div>
     {% if message.model %}
     <p class="text-[11px] text-gray-500 mt-1.5">{{ message.model }}</p>
     {% endif %}

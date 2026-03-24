@@ -228,7 +228,8 @@
 
   function renderMarkdown() {
     document.querySelectorAll('[data-markdown]:not([data-rendered])').forEach(function (el) {
-      el.innerHTML = marked.parse(el.textContent);
+      var src = el.dataset.content !== undefined ? el.dataset.content : el.textContent;
+      el.innerHTML = marked.parse(src);
       el.dataset.rendered = '1';
     });
   }
