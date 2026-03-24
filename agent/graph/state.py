@@ -20,4 +20,5 @@ class AgentState(TypedDict):
     tool_call_rounds: int  # incremented each time execute_tools completes
     visited_urls: list[str]  # URLs already fetched via web_read
     failed_tool_signatures: list[str]  # "tool_name|arg_hash" combos that already errored
+    succeeded_tool_signatures: list[str]  # "tool_name|arg_hash" combos that already succeeded
     error: str | None

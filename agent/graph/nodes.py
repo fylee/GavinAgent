@@ -388,9 +388,12 @@ def call_llm(state: AgentState) -> dict:
         return {
             "pending_tool_calls": tool_calls,
             "assistant_tool_call_message": assistant_tool_call_message,
+            # Clear stale results from the previous round so they don't cause an
+            # ID mismatch when call_llm is invoked again after execute_tools.
+            "tool_results": [],
         }
 
-    return {"output": message.content or "", "pending_tool_calls": [], "assistant_tool_call_message": None}
+    return {"output": message.content or "", "pending_tool_calls": [], "assistant_tool_call_message": None, "tool_results": []}
 
 
 def check_approval(state: AgentState) -> dict:
@@ -454,6 +457,7 @@ def check_approval(state: AgentState) -> dict:
             "tool_results": [],
             "assistant_tool_call_message": state.get("assistant_tool_call_message"),
             "failed_tool_signatures": state.get("failed_tool_signatures") or [],
+            "succeeded_tool_signatures": state.get("succeeded_tool_signatures") or [],
         }
         run.save(update_fields=["status", "graph_state"])
         return {
@@ -483,11 +487,13 @@ def execute_tools(state: AgentState) -> dict:
         pass
 
     import hashlib as _hashlib
+    import json as _json
 
     pending = state.get("pending_tool_calls", [])
     tool_results = []
     visited_urls = list(state.get("visited_urls") or [])
     failed_sigs = list(state.get("failed_tool_signatures") or [])
+    succeeded_sigs = list(state.get("succeeded_tool_signatures") or [])
 
     for tc in pending:
         tool_name = tc["name"]
@@ -508,12 +514,19 @@ def execute_tools(state: AgentState) -> dict:
                 visited_urls.append(url)
 
         # Block retrying a tool call that already failed with the same arguments
-        sig = f"{tool_name}|{_hashlib.md5(str(sorted(args.items())).encode()).hexdigest()}"
+        sig = f"{tool_name}|{_hashlib.md5(_json.dumps(args, sort_keys=True).encode()).hexdigest()}"
         if sig in failed_sigs:
             tc_id = tc["id"]
             tool_results.append({
                 "tool_call_id": tc_id,
                 "result": {"error": f"Tool '{tool_name}' already failed with these arguments. Do not retry — use a different approach or report the error."},
+            })
+            continue
+        if sig in succeeded_sigs:
+            tc_id = tc["id"]
+            tool_results.append({
+                "tool_call_id": tc_id,
+                "result": {"error": f"Tool '{tool_name}' already ran successfully with these arguments this session. Do not call it again — use the previous result to complete your response."},
             })
             continue
         tc_id = tc["id"]
@@ -596,6 +609,8 @@ def execute_tools(state: AgentState) -> dict:
         tool_results.append({"tool_call_id": tc_id, "result": result})
         if result.get("error"):
             failed_sigs.append(sig)
+        else:
+            succeeded_sigs.append(sig)
 
     rounds = state.get("tool_call_rounds", 0) + 1
     return {
@@ -604,6 +619,7 @@ def execute_tools(state: AgentState) -> dict:
         "tool_call_rounds": rounds,
         "visited_urls": visited_urls,
         "failed_tool_signatures": failed_sigs,
+        "succeeded_tool_signatures": succeeded_sigs,
     }
 
 
