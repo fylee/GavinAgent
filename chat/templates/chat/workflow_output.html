@@ -150,12 +150,10 @@
   (function() {
     var renderer = new marked.Renderer();
     renderer.image = function(href, title, text) {
-      if (href && typeof href === 'object') { title = href.title; text = href.text; href = href.href; }
-      if (href && href.startsWith('sandbox:')) { href = href.slice('sandbox:'.length); }
       var titleAttr = title ? ' title="' + title + '"' : '';
-      return '<img src="' + href + '" alt="' + (text || '') + '"' + titleAttr + '>';
+      return '<img src="' + (href || '') + '" alt="' + (text || '') + '"' + titleAttr + '>';
     };
-    marked.use({ renderer: renderer });
+    marked.setOptions({ renderer: renderer });
   })();
 
   function renderMarkdown() {
