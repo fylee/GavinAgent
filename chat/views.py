@@ -26,6 +26,7 @@ class SidebarMixin:
                 interface=Conversation.Interface.WEB,
             ).exclude(
                 metadata__workflow_inbox=True,
+                metadata__has_key="workflow_inbox",
             ).order_by("-updated_at")[:100]
         )
         today = timezone.now().date()
