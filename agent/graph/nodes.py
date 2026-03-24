@@ -322,6 +322,20 @@ def call_llm(state: AgentState) -> dict:
                 required_ids - result_ids,
             )
 
+    # If tool outputs produced markdown (e.g. chart images) in a previous round,
+    # remind the LLM to include them verbatim in its final answer.
+    collected_markdown = list(state.get("collected_markdown") or [])
+    if collected_markdown and not tool_results:
+        # Only inject when we're on a concluding round (no new tool results to process)
+        verbatim = "\n".join(collected_markdown)
+        messages.append({
+            "role": "user",
+            "content": (
+                f"Your response MUST include the following markdown verbatim "
+                f"(copy it exactly — do not describe or paraphrase it):\n\n{verbatim}"
+            ),
+        })
+
     # Build tool schemas — filtered to only tools enabled on this agent
     from agent.models import Agent as AgentModel
     try:
@@ -534,6 +548,7 @@ def check_approval(state: AgentState) -> dict:
             "assistant_tool_call_message": state.get("assistant_tool_call_message"),
             "failed_tool_signatures": state.get("failed_tool_signatures") or [],
             "succeeded_tool_signatures": state.get("succeeded_tool_signatures") or [],
+            "collected_markdown": state.get("collected_markdown") or [],
         }
         run.save(update_fields=["status", "graph_state"])
         return {
@@ -574,6 +589,7 @@ def execute_tools(state: AgentState) -> dict:
     visited_urls = list(state.get("visited_urls") or [])
     failed_sigs = list(state.get("failed_tool_signatures") or [])
     succeeded_sigs = list(state.get("succeeded_tool_signatures") or [])
+    collected_markdown = list(state.get("collected_markdown") or [])
 
     for tc in pending:
         tool_name = tc["name"]
@@ -691,6 +707,11 @@ def execute_tools(state: AgentState) -> dict:
             failed_sigs.append(sig)
         else:
             succeeded_sigs.append(sig)
+            # Persist any markdown output (e.g. chart images) so it survives
+            # across rounds even after tool_results is cleared.
+            output = result.get("output", {})
+            if isinstance(output, dict) and output.get("markdown"):
+                collected_markdown.append(output["markdown"])
 
     rounds = state.get("tool_call_rounds", 0) + 1
     return {
@@ -700,6 +721,7 @@ def execute_tools(state: AgentState) -> dict:
         "visited_urls": visited_urls,
         "failed_tool_signatures": failed_sigs,
         "succeeded_tool_signatures": succeeded_sigs,
+        "collected_markdown": collected_markdown,
     }
 
 
@@ -714,15 +736,10 @@ def force_conclude(state: AgentState) -> dict:
 
     # Collect any markdown-bearing results (e.g. chart images) so they are
     # always preserved verbatim regardless of what the LLM does with them.
+    # Use collected_markdown from state (persisted by execute_tools across rounds)
+    # since tool_results at this point may only contain dedup error strings.
     tool_results = state.get("tool_results", [])
-    markdown_snippets: list[str] = []
-    for tr in tool_results:
-        result = tr.get("result", {})
-        output = result.get("output", {})
-        if isinstance(output, dict):
-            md = output.get("markdown")
-            if md:
-                markdown_snippets.append(md)
+    markdown_snippets: list[str] = list(state.get("collected_markdown") or [])
 
     messages: list[dict] = [{"role": "system", "content": system_content}]
     if state.get("conversation_id"):

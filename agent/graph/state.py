@@ -21,4 +21,5 @@ class AgentState(TypedDict):
     visited_urls: list[str]  # URLs already fetched via web_read
     failed_tool_signatures: list[str]  # "tool_name|arg_hash" combos that already errored
     succeeded_tool_signatures: list[str]  # "tool_name|arg_hash" combos that already succeeded
+    collected_markdown: list[str]  # markdown snippets from tool outputs (e.g. chart images), persisted across rounds
     error: str | None

@@ -106,6 +106,7 @@ class AgentRunner:
             assistant_tool_call_message = saved.get("assistant_tool_call_message")
             failed_tool_signatures = saved.get("failed_tool_signatures") or []
             succeeded_tool_signatures = saved.get("succeeded_tool_signatures") or []
+            collected_markdown = saved.get("collected_markdown") or []
             # Clear saved state so a fresh failure doesn't re-run old tools
             AgentRunModel.objects.filter(pk=run.pk).update(graph_state={})
         else:
@@ -113,6 +114,7 @@ class AgentRunner:
             assistant_tool_call_message = None
             failed_tool_signatures = []
             succeeded_tool_signatures = []
+            collected_markdown = []
 
         initial_state = AgentState(
             run_id=str(run.id),
@@ -127,6 +129,7 @@ class AgentRunner:
             waiting_for_approval=False,
             failed_tool_signatures=failed_tool_signatures,
             succeeded_tool_signatures=succeeded_tool_signatures,
+            collected_markdown=collected_markdown,
             error=None,
         )
 
