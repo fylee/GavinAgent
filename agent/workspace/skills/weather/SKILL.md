@@ -12,7 +12,15 @@ examples:
   - "UV index in Tainan"
 ---
 
-Call the handler with a comma-separated list of city names as input.
-Example input: "Taichung, Hsinchu"
+## How to use
 
-The handler geocodes each city and fetches current conditions from the Open-Meteo API (no API key required). Return the structured data directly to the user in a readable format.
+Call the `run_skill` tool with `skill_name="weather"` and `input` set to a
+comma-separated list of city names.
+
+```
+run_skill(skill_name="weather", input="Taipei, Kaohsiung, Taichung")
+```
+
+Do NOT use `web_read`, `api_get`, or any other tool to fetch weather data.
+The handler geocodes each city and fetches current conditions from the
+Open-Meteo API automatically.
