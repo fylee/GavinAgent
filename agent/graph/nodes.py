@@ -398,12 +398,49 @@ def call_llm(state: AgentState) -> dict:
 
 def check_approval(state: AgentState) -> dict:
     """Check each pending tool call against its approval policy."""
+    import hashlib as _hashlib
+    import json as _json
     from agent.tools import get_tool
     from agent.tools.base import ApprovalPolicy
     from agent.models import AgentRun, ToolExecution
 
     pending = state.get("pending_tool_calls", [])
     run = AgentRun.objects.get(pk=state["run_id"])
+
+    failed_sigs = list(state.get("failed_tool_signatures") or [])
+    succeeded_sigs = list(state.get("succeeded_tool_signatures") or [])
+
+    # Pre-filter: drop any tool calls that already succeeded or failed this run.
+    # This prevents ToolExecution rows being created for calls we'll never execute.
+    filtered_pending = []
+    dropped_results = []
+    for tc in pending:
+        sig = f"{tc['name']}|{_hashlib.md5(_json.dumps(tc.get('arguments', {}), sort_keys=True).encode()).hexdigest()}"
+        if sig in succeeded_sigs:
+            dropped_results.append({
+                "tool_call_id": tc["id"],
+                "result": {"error": f"Tool '{tc['name']}' already ran successfully with these arguments this session. Do not call it again — use the previous result to compose your final answer."},
+            })
+        elif sig in failed_sigs:
+            dropped_results.append({
+                "tool_call_id": tc["id"],
+                "result": {"error": f"Tool '{tc['name']}' already failed with these arguments. Do not retry — use a different approach or report the error."},
+            })
+        else:
+            filtered_pending.append(tc)
+
+    # If ALL calls were dropped, skip execution entirely and feed results back to LLM.
+    if dropped_results and not filtered_pending:
+        return {
+            "pending_tool_calls": [],
+            "tool_results": dropped_results,
+            "waiting_for_approval": False,
+        }
+
+    # Replace pending with the filtered list for the rest of approval logic.
+    # dropped_results will be returned alongside pending_tool_calls so that
+    # execute_tools can merge them with the results it actually runs.
+    pending = filtered_pending
 
     needs_approval = []
     auto_execute = []
@@ -468,6 +505,9 @@ def check_approval(state: AgentState) -> dict:
     return {
         "pending_tool_calls": auto_execute,
         "waiting_for_approval": False,
+        # Pre-populate tool_results with responses for any calls that were dropped
+        # (already succeeded/failed); execute_tools will merge its own results in.
+        "tool_results": dropped_results,
     }
 
 
@@ -490,7 +530,8 @@ def execute_tools(state: AgentState) -> dict:
     import json as _json
 
     pending = state.get("pending_tool_calls", [])
-    tool_results = []
+    # Pre-populated by check_approval for any calls that were dropped (already succeeded/failed).
+    tool_results = list(state.get("tool_results") or [])
     visited_urls = list(state.get("visited_urls") or [])
     failed_sigs = list(state.get("failed_tool_signatures") or [])
     succeeded_sigs = list(state.get("succeeded_tool_signatures") or [])
