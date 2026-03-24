@@ -23,8 +23,8 @@ class ChartTool(BaseTool):
         "properties": {
             "chart_type": {
                 "type": "string",
-                "enum": ["bar", "line", "pie", "scatter"],
-                "description": "The type of chart to generate.",
+                "enum": ["bar", "barh", "line", "pie", "scatter"],
+                "description": "The type of chart to generate. Use 'barh' for horizontal bars (better when there are many labels).",
             },
             "title": {
                 "type": "string",
@@ -85,8 +85,13 @@ class ChartTool(BaseTool):
             # non-string values (spaces, punctuation, numbers, etc.)
             labels = [str(lb) for lb in labels]
             n_labels = len(labels)
-            fig_width = max(8, n_labels * 0.5)
-            fig, ax = plt.subplots(figsize=(fig_width, 5))
+            if chart_type == "barh":
+                fig_width = 8
+                fig_height = max(5, n_labels * 0.35)
+            else:
+                fig_width = max(8, n_labels * 0.5)
+                fig_height = 5
+            fig, ax = plt.subplots(figsize=(fig_width, fig_height))
             fig.patch.set_facecolor("#1e1e2e")
             ax.set_facecolor("#1e1e2e")
             ax.tick_params(colors="#cccccc")
@@ -102,6 +107,10 @@ class ChartTool(BaseTool):
                 ax.bar(labels, values, color=color)
                 ax.set_xticks(range(len(labels)))
                 ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=max(7, 10 - n_labels // 5))
+            elif chart_type == "barh":
+                ax.barh(labels, values, color=color)
+                ax.invert_yaxis()  # top label first
+                ax.tick_params(axis="y", labelsize=max(7, 10 - n_labels // 8))
             elif chart_type == "line":
                 ax.plot(labels, values, color=color, marker="o")
                 ax.set_xticks(range(len(labels)))

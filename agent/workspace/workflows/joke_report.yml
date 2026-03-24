@@ -24,8 +24,15 @@ steps:
 
   - name: character-chart
     prompt: >
-      Take the joke text from the previous step output (the setup and punchline combined).
-      Count the frequency of every English letter (a-z, case-insensitive, letters only).
-      Then use the chart tool to produce a horizontal bar chart titled
-      "Letter Frequency in Today's Joke" with the letter counts.
-      Append the chart to the previous step output and return the complete report.
+      You are given the previous step output which contains a joke (setup and punchline).
+      Do the following:
+
+      1. Extract only the joke text (setup + punchline combined).
+      2. Count how many times each English letter a-z appears (case-insensitive, ignore
+         spaces, punctuation, and any non-letter characters).
+      3. Build two parallel arrays — one for the 26 letters ["a","b","c",...,"z"] and
+         one for their counts — only include letters that appear at least once.
+         Sort them alphabetically by letter.
+      4. Call the chart tool with chart_type="bar", those labels and values,
+         and title="Letter Frequency in Today's Joke".
+      5. Return the full previous step output followed by the chart markdown image.
