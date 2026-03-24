@@ -30,6 +30,11 @@ class DateTimeTool(BaseTool):
         try:
             from datetime import datetime
             import zoneinfo
+            from django.conf import settings
+
+            # Default to AGENT_TIMEZONE from settings, then OS local time
+            if not timezone:
+                timezone = getattr(settings, "AGENT_TIMEZONE", None)
 
             if timezone:
                 try:
