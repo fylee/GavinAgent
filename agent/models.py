@@ -411,3 +411,69 @@ class SkillEmbedding(TimeStampedModel):
 
     def __str__(self):
         return f"SkillEmbedding({self.skill_name})"
+
+
+class KnowledgeDocument(TimeStampedModel):
+    """A source document in the knowledge base."""
+
+    class SourceType(models.TextChoices):
+        UPLOAD = "upload", "File Upload"
+        URL = "url", "Web URL"
+        TEXT = "text", "Pasted Text"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        READY = "ready", "Ready"
+        ERROR = "error", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid4)
+    title = models.CharField(max_length=255)
+    source_type = models.CharField(max_length=20, choices=SourceType.choices)
+    source_url = models.URLField(blank=True)
+    raw_content = models.TextField(help_text="Original full text")
+    metadata = models.JSONField(default=dict)
+    chunk_count = models.PositiveIntegerField(default=0)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.title
+
+
+class DocumentChunk(TimeStampedModel):
+    """An embedded chunk of a KnowledgeDocument for vector search."""
+
+    id = models.UUIDField(primary_key=True, default=uuid4)
+    document = models.ForeignKey(
+        KnowledgeDocument,
+        on_delete=models.CASCADE,
+        related_name="chunks",
+    )
+    content = models.TextField()
+    embedding = VectorField(dimensions=1536)
+    chunk_index = models.PositiveIntegerField()
+    token_count = models.PositiveIntegerField(default=0)
+    content_hash = models.CharField(max_length=64)
+
+    class Meta:
+        ordering = ["document", "chunk_index"]
+        indexes = [
+            HnswIndex(
+                name="docchunk_embedding_hnsw",
+                fields=["embedding"],
+                m=16,
+                ef_construction=64,
+                opclasses=["vector_cosine_ops"],
+            )
+        ]
+
+    def __str__(self):
+        return f"DocumentChunk {self.document.title}[{self.chunk_index}]"

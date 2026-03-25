@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import Agent, AgentRun, HeartbeatLog, LLMUsage, Memory, ReembedLog, Skill, ToolExecution
+from .models import (
+    Agent, AgentRun, DocumentChunk, HeartbeatLog, KnowledgeDocument,
+    LLMUsage, Memory, ReembedLog, Skill, ToolExecution,
+)
 
 
 @admin.register(Agent)
@@ -73,3 +76,22 @@ class ReembedLogAdmin(admin.ModelAdmin):
     list_filter = ["triggered_by", "created_at"]
     readonly_fields = ["id", "created_at", "updated_at"]
     ordering = ["-created_at"]
+
+
+@admin.register(KnowledgeDocument)
+class KnowledgeDocumentAdmin(admin.ModelAdmin):
+    list_display = ["title", "source_type", "status", "chunk_count", "is_active", "created_at"]
+    list_filter = ["source_type", "status", "is_active", "created_at"]
+    search_fields = ["title"]
+    readonly_fields = ["id", "created_at", "updated_at"]
+    ordering = ["-created_at"]
+
+
+@admin.register(DocumentChunk)
+class DocumentChunkAdmin(admin.ModelAdmin):
+    list_display = ["id", "document", "chunk_index", "token_count", "created_at"]
+    list_filter = ["document", "created_at"]
+    search_fields = ["content"]
+    readonly_fields = ["id", "created_at", "updated_at"]
+    ordering = ["document", "chunk_index"]
+    raw_id_fields = ["document"]

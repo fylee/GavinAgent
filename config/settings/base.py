@@ -140,6 +140,12 @@ AGENT_BROWSER_TIMEOUT_SECONDS = config(
 )
 MAX_TOOL_OUTPUT_CHARS = config("MAX_TOOL_OUTPUT_CHARS", default=20000, cast=int)
 
+# RAG Knowledge Base
+RAG_CHUNK_SIZE_TOKENS = config("RAG_CHUNK_SIZE_TOKENS", default=500, cast=int)
+RAG_CHUNK_OVERLAP_TOKENS = config("RAG_CHUNK_OVERLAP_TOKENS", default=50, cast=int)
+RAG_SEARCH_LIMIT = config("RAG_SEARCH_LIMIT", default=5, cast=int)
+RAG_SIMILARITY_THRESHOLD = config("RAG_SIMILARITY_THRESHOLD", default=0.3, cast=float)
+
 # MCP — Fernet encryption keys for MCPServer.env field
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 FERNET_KEYS = [

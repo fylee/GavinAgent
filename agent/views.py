@@ -40,7 +40,7 @@ from django.views import View
 from django.views.generic import ListView, DetailView, TemplateView
 from django_htmx.http import HttpResponseClientRedirect
 
-from .models import Agent, AgentRun, HeartbeatLog, LLMUsage, ReembedLog, Skill, ToolExecution, Workflow
+from .models import Agent, AgentRun, HeartbeatLog, LLMUsage, ReembedLog, Skill, ToolExecution, Workflow, KnowledgeDocument
 from .tasks import execute_agent_run
 
 
@@ -1524,4 +1524,140 @@ class WorkflowDeleteView(View):
             response["HX-Redirect"] = "/agent/workflows/"
             return response
         return redirect("agent:workflow-list")
+
+
+# ── Knowledge Base ──────────────────────────────────────────────────────────
+
+
+class KnowledgeListView(View):
+    """List all knowledge documents."""
+
+    def get(self, request: HttpRequest) -> HttpResponse:
+        docs = KnowledgeDocument.objects.all()
+        return render(request, "agent/knowledge.html", {"documents": docs})
+
+
+class KnowledgeCreateView(View):
+    """Create a knowledge document from file upload, URL, or pasted text."""
+
+    def get(self, request: HttpRequest) -> HttpResponse:
+        return render(request, "agent/_knowledge_add_form.html")
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        from agent.rag.tasks import ingest_document_task
+        from agent.rag.ingest import _fetch_url_content, _extract_pdf_text
+
+        source_type = request.POST.get("source_type", "text")
+        title = request.POST.get("title", "").strip()
+        raw_content = ""
+
+        if source_type == "url":
+            url = request.POST.get("source_url", "").strip()
+            if not url:
+                return HttpResponse(
+                    '<p class="text-red-400 text-sm">URL is required.</p>'
+                )
+            try:
+                raw_content = _fetch_url_content(url)
+            except Exception as exc:
+                return HttpResponse(
+                    f'<p class="text-red-400 text-sm">Failed to fetch URL: {exc}</p>'
+                )
+            if not title:
+                title = url.split("/")[-1] or url[:80]
+            doc = KnowledgeDocument.objects.create(
+                title=title,
+                source_type=KnowledgeDocument.SourceType.URL,
+                source_url=url,
+                raw_content=raw_content,
+                status=KnowledgeDocument.Status.PENDING,
+            )
+
+        elif source_type == "upload":
+            uploaded = request.FILES.get("file")
+            if not uploaded:
+                return HttpResponse(
+                    '<p class="text-red-400 text-sm">File is required.</p>'
+                )
+            if not title:
+                title = uploaded.name
+            file_bytes = uploaded.read()
+            name_lower = uploaded.name.lower()
+            if name_lower.endswith(".pdf"):
+                try:
+                    raw_content = _extract_pdf_text(file_bytes)
+                except Exception as exc:
+                    return HttpResponse(
+                        f'<p class="text-red-400 text-sm">Failed to parse PDF: {exc}</p>'
+                    )
+            else:
+                raw_content = file_bytes.decode("utf-8", errors="replace")
+            doc = KnowledgeDocument.objects.create(
+                title=title,
+                source_type=KnowledgeDocument.SourceType.UPLOAD,
+                raw_content=raw_content,
+                status=KnowledgeDocument.Status.PENDING,
+            )
+
+        else:  # text
+            raw_content = request.POST.get("raw_content", "").strip()
+            if not raw_content:
+                return HttpResponse(
+                    '<p class="text-red-400 text-sm">Text content is required.</p>'
+                )
+            if not title:
+                title = raw_content[:60] + ("…" if len(raw_content) > 60 else "")
+            doc = KnowledgeDocument.objects.create(
+                title=title,
+                source_type=KnowledgeDocument.SourceType.TEXT,
+                raw_content=raw_content,
+                status=KnowledgeDocument.Status.PENDING,
+            )
+
+        # Dispatch async ingestion
+        ingest_document_task.delay(str(doc.id))
+
+        if request.htmx:
+            return HttpResponse(headers={"HX-Redirect": "/agent/knowledge/"})
+        return redirect("agent:knowledge")
+
+
+class KnowledgeToggleView(View):
+    """Toggle is_active for a knowledge document."""
+
+    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
+        doc = get_object_or_404(KnowledgeDocument, pk=pk)
+        doc.is_active = not doc.is_active
+        doc.save(update_fields=["is_active"])
+        return render(request, "agent/_knowledge_row.html", {"doc": doc})
+
+
+class KnowledgeStatusView(View):
+    """Return updated row partial for polling during ingestion."""
+
+    def get(self, request: HttpRequest, pk: str) -> HttpResponse:
+        doc = get_object_or_404(KnowledgeDocument, pk=pk)
+        return render(request, "agent/_knowledge_row.html", {"doc": doc})
+
+
+class KnowledgeReingestView(View):
+    """Re-ingest a single document (re-chunk + re-embed)."""
+
+    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
+        from agent.rag.tasks import ingest_document_task
+
+        doc = get_object_or_404(KnowledgeDocument, pk=pk)
+        doc.status = KnowledgeDocument.Status.PENDING
+        doc.save(update_fields=["status"])
+        ingest_document_task.delay(str(doc.id))
+        return render(request, "agent/_knowledge_row.html", {"doc": doc})
+
+
+class KnowledgeDeleteView(View):
+    """Delete a knowledge document and all its chunks."""
+
+    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
+        doc = get_object_or_404(KnowledgeDocument, pk=pk)
+        doc.delete()
+        return HttpResponse("")
 

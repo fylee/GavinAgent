@@ -1,0 +1,38 @@
+{% extends "agent/base_agent.html" %}
+{% block title %}Knowledge Base{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-semibold text-white">Knowledge Base</h1>
+    <button
+      hx-get="{% url 'agent:knowledge-add' %}"
+      hx-target="#add-form-slot"
+      hx-swap="innerHTML"
+      class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
+      + Add document
+    </button>
+  </div>
+
+  <div class="rounded-lg border border-white/10 bg-blue-900/10 px-4 py-2">
+    <p class="text-blue-400 text-xs">
+      Documents are chunked, embedded, and automatically injected into the agent's context when relevant to a query.
+      Toggle documents inactive to exclude them from search without deleting.
+    </p>
+  </div>
+
+  {# Add form slot — filled by HTMX #}
+  <div id="add-form-slot"></div>
+
+  {# Document list #}
+  <div id="knowledge-list" class="space-y-3">
+    {% for doc in documents %}
+      {% include "agent/_knowledge_row.html" %}
+    {% empty %}
+      <p class="text-gray-500 text-sm">No documents in the knowledge base. Click "+ Add document" to get started.</p>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}

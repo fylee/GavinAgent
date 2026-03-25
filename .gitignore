@@ -47,3 +47,12 @@ agent/workspace/memory/
 agent/workspace/*.txt
 agent/workspace/*.docx
 agent/workspace/*.py
+agent/workspace/*.png
+agent/workspace/*.md
+!agent/workspace/AGENTS.md
+!agent/workspace/AGENTS.md.example
+!agent/workspace/SOUL.md
+!agent/workspace/SOUL.md.example
+!agent/workspace/HEARTBEAT.md.example
+agent/workspace/daily_reports/
+agent/workspace/reports/

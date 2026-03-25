@@ -123,6 +123,31 @@ def _build_skills_section(query: str) -> tuple[str, list[str]]:
     return section, triggered
 
 
+def _build_knowledge_section(query: str) -> str:
+    """Retrieve relevant knowledge chunks and format as a system prompt section.
+
+    Returns an empty string if no relevant chunks are found above threshold.
+    """
+    from agent.rag.retriever import retrieve_knowledge
+
+    results = retrieve_knowledge(query)
+    if not results:
+        return ""
+
+    parts = [
+        "## Reference Knowledge\n\n"
+        "The following excerpts from your knowledge base are relevant to this query.\n"
+        "Use them to ground your answer. Cite the source when appropriate."
+    ]
+    for r in results:
+        header = f"### From: {r['document_title']}"
+        if r["source_url"]:
+            header += f" ({r['source_url']})"
+        parts.append(f"{header}\n\n{r['content']}")
+
+    return "\n\n".join(parts)
+
+
 def _build_system_context(query: str) -> tuple[str, list[str]]:
     """Assemble system prompt from workspace files, memories, and MCP resources.
 
@@ -163,6 +188,14 @@ def _build_system_context(query: str) -> tuple[str, list[str]]:
         resources = MCPConnectionPool.get().fetch_always_include_resources()
         if resources:
             parts.append("## MCP Resources\n\n" + "\n\n".join(resources))
+    except Exception:
+        pass
+
+    # Knowledge base context (auto-injected via RAG)
+    try:
+        knowledge_section = _build_knowledge_section(query)
+        if knowledge_section:
+            parts.append(knowledge_section)
     except Exception:
         pass
 

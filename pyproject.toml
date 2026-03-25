@@ -19,8 +19,10 @@ dependencies = [
     "mcp>=1.26.0",
     "pgvector>=0.4.2",
     "psycopg[binary]>=3.3.3",
+    "pymupdf>=1.27.2.2",
     "python-decouple>=3.8",
     "python-telegram-bot>=22.7",
     "pyyaml>=6.0.3",
     "redis>=6.4.0",
+    "tiktoken>=0.12.0",
 ]

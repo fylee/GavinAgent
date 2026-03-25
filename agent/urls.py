@@ -73,4 +73,12 @@ urlpatterns = [
     path("mcp/<uuid:pk>/toggle/", views.MCPServerToggleView.as_view(), name="mcp-toggle"),
     path("mcp/<uuid:pk>/refresh/", views.MCPServerRefreshView.as_view(), name="mcp-refresh"),
     path("mcp/<uuid:pk>/delete/", views.MCPServerDeleteView.as_view(), name="mcp-delete"),
+
+    # Knowledge Base
+    path("knowledge/", views.KnowledgeListView.as_view(), name="knowledge"),
+    path("knowledge/add/", views.KnowledgeCreateView.as_view(), name="knowledge-add"),
+    path("knowledge/<uuid:pk>/toggle/", views.KnowledgeToggleView.as_view(), name="knowledge-toggle"),
+    path("knowledge/<uuid:pk>/status/", views.KnowledgeStatusView.as_view(), name="knowledge-status"),
+    path("knowledge/<uuid:pk>/reingest/", views.KnowledgeReingestView.as_view(), name="knowledge-reingest"),
+    path("knowledge/<uuid:pk>/delete/", views.KnowledgeDeleteView.as_view(), name="knowledge-delete"),
 ]
