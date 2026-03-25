@@ -105,14 +105,21 @@ def find_relevant_skills(query: str, threshold: float = SIMILARITY_THRESHOLD) ->
     from pgvector.django import CosineDistance
 
     try:
+        from agent.models import Skill
+
+        disabled = set(
+            Skill.objects.filter(enabled=False).values_list("name", flat=True)
+        )
         query_vector = embed_text(query)
-        results = (
+        qs = (
             SkillEmbedding.objects
             .annotate(distance=CosineDistance("embedding", query_vector))
             .filter(distance__lte=1 - threshold)
             .order_by("distance")
         )
-        return [r.skill_name for r in results]
+        if disabled:
+            qs = qs.exclude(skill_name__in=disabled)
+        return [r.skill_name for r in qs]
     except Exception as exc:
         logger.warning("Skill similarity search failed: %s", exc)
         return []

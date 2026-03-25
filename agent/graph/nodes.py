@@ -59,11 +59,20 @@ def _build_skills_section(query: str) -> tuple[str, list[str]]:
     body_sections: list[str] = []
     triggered: list[str] = []
 
+    # Load set of disabled skill names from DB
+    from agent.models import Skill
+    disabled_skills = set(
+        Skill.objects.filter(enabled=False).values_list("name", flat=True)
+    )
+
     for skill_dir in sorted(skills_dir.iterdir()):
         if not skill_dir.is_dir():
             continue
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.exists():
+            continue
+        # Skip disabled skills
+        if skill_dir.name in disabled_skills:
             continue
         text = skill_md.read_text(encoding="utf-8")
         meta: dict = {}
