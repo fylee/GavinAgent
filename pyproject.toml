@@ -31,8 +31,10 @@ dependencies = [
 [dependency-groups]
 dev = [
     "factory-boy>=3.3.3",
+    "playwright>=1.58.0",
     "pytest>=9.0.2",
     "pytest-django>=4.12.0",
+    "pytest-playwright>=0.7.2",
     "respx>=0.22.0",
 ]
 
@@ -42,8 +44,9 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --ds config.settings.test"
 markers = [
     "db: requires PostgreSQL test database",
     "external: mocks external services (LLM, SearXNG, Jina)",
+    "e2e: end-to-end browser tests (requires Playwright + live server)",
 ]

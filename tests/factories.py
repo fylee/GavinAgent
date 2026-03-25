@@ -90,6 +90,7 @@ class DocumentChunkFactory(factory.django.DjangoModelFactory):
 class LLMUsageFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = "agent.LLMUsage"
+        rename = {"model_name": "model"}
 
     model_name = "openai/gpt-4o-mini"
     prompt_tokens = 100
@@ -105,6 +106,27 @@ class WorkflowFactory(factory.django.DjangoModelFactory):
 
     name = factory.Sequence(lambda n: f"Test Workflow {n}")
     agent = factory.SubFactory(AgentFactory)
-    is_active = True
+    enabled = True
     delivery = "silent"
     definition = factory.LazyFunction(lambda: {"steps": [{"input": "test"}]})
+    filename = factory.LazyAttribute(lambda o: f"{o.name}.yml")
+
+
+class MCPServerFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "agent.MCPServer"
+
+    name = factory.Sequence(lambda n: f"test-mcp-server-{n}")
+    transport = "stdio"
+    command = "echo hello"
+    enabled = True
+    connection_status = "connected"
+
+
+class HeartbeatLogFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "agent.HeartbeatLog"
+
+    triggered_at = factory.LazyFunction(timezone.now)
+    status = "ok"
+    actions_taken = factory.LazyFunction(list)

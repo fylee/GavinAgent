@@ -1,0 +1,4 @@
+name: Daily Joke Report
+cron: '22 17 * * *'
+tasks:
+  - type: run-joke-report
