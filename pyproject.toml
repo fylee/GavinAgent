@@ -27,3 +27,22 @@ dependencies = [
     "tiktoken>=0.12.0",
     "trafilatura>=2.0.0",
 ]
+
+[dependency-groups]
+dev = [
+    "factory-boy>=3.3.3",
+    "pytest>=9.0.2",
+    "pytest-django>=4.12.0",
+    "respx>=0.22.0",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+markers = [
+    "db: requires PostgreSQL test database",
+    "external: mocks external services (LLM, SearXNG, Jina)",
+]
