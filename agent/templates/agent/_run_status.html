@@ -88,9 +88,8 @@
   <div class="flex items-center gap-2 flex-wrap">
     <span class="text-xs text-gray-500">Knowledge</span>
     {% for match in rag_matches %}
-    <span class="text-xs px-2 py-0.5 rounded-full bg-teal-900 text-teal-300"
-          title="Similarity: {{ match.similarity }}">
-      📄 {{ match.title }}
+    <span class="text-xs px-2 py-0.5 rounded-full bg-teal-900 text-teal-300">
+      📄 {{ match.title }} <span class="text-teal-500 ml-0.5">{{ match.similarity }}</span>
     </span>
     {% endfor %}
   </div>
