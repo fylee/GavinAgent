@@ -14,6 +14,7 @@ def get_completion(
 ):
     """Get a completion from the LLM via litellm. Records LLMUsage after success."""
     model = model or settings.LITELLM_DEFAULT_MODEL
+    kwargs.setdefault("timeout", settings.LLM_TIMEOUT_SECONDS)
     response = litellm.completion(model=model, messages=messages, **kwargs)
 
     # Record usage
@@ -46,5 +47,6 @@ def get_completion(
 def get_completion_stream(messages: list[dict], model: str | None = None, **kwargs):
     """Get a streaming completion from the LLM via litellm."""
     model = model or settings.LITELLM_DEFAULT_MODEL
+    kwargs.setdefault("timeout", settings.LLM_TIMEOUT_SECONDS)
     response = litellm.completion(model=model, messages=messages, stream=True, **kwargs)
     return response

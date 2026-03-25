@@ -97,6 +97,7 @@ TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default="")
 
 # LiteLLM
 LITELLM_DEFAULT_MODEL = config("LITELLM_DEFAULT_MODEL", default="openai/gpt-4o-mini")
+LLM_TIMEOUT_SECONDS = config("LLM_TIMEOUT_SECONDS", default=120, cast=int)
 
 AVAILABLE_MODELS = [
     ("openai/gpt-4o-mini", "GPT-4o mini"),
