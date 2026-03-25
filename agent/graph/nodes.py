@@ -841,7 +841,7 @@ def force_conclude(state: AgentState) -> dict:
     from agent.models import AgentRun
 
     model = _get_agent_model(state["agent_id"])
-    system_content, _ = _build_system_context(state.get("input", ""))
+    system_content, _, _ = _build_system_context(state.get("input", ""))
 
     # Collect any markdown-bearing results (e.g. chart images) so they are
     # always preserved verbatim regardless of what the LLM does with them.
