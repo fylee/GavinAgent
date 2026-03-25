@@ -83,6 +83,19 @@
   </div>
   {% endif %}
 
+  {# RAG knowledge matches #}
+  {% if rag_matches %}
+  <div class="flex items-center gap-2 flex-wrap">
+    <span class="text-xs text-gray-500">Knowledge</span>
+    {% for match in rag_matches %}
+    <span class="text-xs px-2 py-0.5 rounded-full bg-teal-900 text-teal-300"
+          title="Similarity: {{ match.similarity }}">
+      📄 {{ match.title }}
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {# Tool execution trace #}
   {% if tool_executions %}
   <div>

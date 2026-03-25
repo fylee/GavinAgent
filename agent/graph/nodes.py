@@ -132,29 +132,38 @@ def _build_skills_section(query: str) -> tuple[str, list[str]]:
     return section, triggered
 
 
-def _build_knowledge_section(query: str) -> str:
+def _build_knowledge_section(query: str) -> tuple[str, list[dict]]:
     """Retrieve relevant knowledge chunks and format as a system prompt section.
 
-    Returns an empty string if no relevant chunks are found above threshold.
+    Returns (section_text, matched_documents) where matched_documents is a list
+    of {title, similarity} dicts. section_text is empty if nothing matched.
     """
     from agent.rag.retriever import retrieve_knowledge
 
     results = retrieve_knowledge(query)
     if not results:
-        return ""
+        return "", []
 
     parts = [
         "## Reference Knowledge\n\n"
         "The following excerpts from your knowledge base are relevant to this query.\n"
         "Use them to ground your answer. Cite the source when appropriate."
     ]
+    # Deduplicate document titles for the summary
+    seen_titles: dict[str, float] = {}
     for r in results:
         header = f"### From: {r['document_title']}"
         if r["source_url"]:
             header += f" ({r['source_url']})"
         parts.append(f"{header}\n\n{r['content']}")
+        if r["document_title"] not in seen_titles:
+            seen_titles[r["document_title"]] = r["similarity"]
 
-    return "\n\n".join(parts)
+    matched_docs = [
+        {"title": title, "similarity": sim}
+        for title, sim in seen_titles.items()
+    ]
+    return "\n\n".join(parts), matched_docs
 
 
 def _build_system_context(query: str) -> tuple[str, list[str]]:
@@ -201,8 +210,9 @@ def _build_system_context(query: str) -> tuple[str, list[str]]:
         pass
 
     # Knowledge base context (auto-injected via RAG)
+    rag_matches: list[dict] = []
     try:
-        knowledge_section = _build_knowledge_section(query)
+        knowledge_section, rag_matches = _build_knowledge_section(query)
         if knowledge_section:
             parts.append(knowledge_section)
     except Exception:
@@ -220,7 +230,7 @@ def _build_system_context(query: str) -> tuple[str, list[str]]:
         "as-is so that images and links render correctly."
     )
 
-    return content, triggered
+    return content, triggered, rag_matches
 
 
 def _get_agent_model(agent_id: str) -> str:
@@ -286,7 +296,7 @@ def call_llm(state: AgentState) -> dict:
         pass
 
     model = _get_agent_model(state["agent_id"])
-    system_content, triggered_skills = _build_system_context(state.get("input", ""))
+    system_content, triggered_skills, rag_matches = _build_system_context(state.get("input", ""))
 
     # Append conversation_id to system prompt so agent can reference it in workflows
     conversation_id = state.get("conversation_id")
@@ -435,8 +445,17 @@ def call_llm(state: AgentState) -> dict:
     try:
         from agent.models import AgentRun
         _run_obj = AgentRun.objects.get(pk=state["run_id"])
+        update_fields = {}
         if triggered_skills:
-            AgentRun.objects.filter(pk=state["run_id"]).update(triggered_skills=triggered_skills)
+            update_fields["triggered_skills"] = triggered_skills
+        if rag_matches:
+            # Store RAG document matches in graph_state for UI display
+            run_obj = AgentRun.objects.get(pk=state["run_id"])
+            gs = run_obj.graph_state or {}
+            gs["rag_matches"] = rag_matches
+            update_fields["graph_state"] = gs
+        if update_fields:
+            AgentRun.objects.filter(pk=state["run_id"]).update(**update_fields)
     except Exception:
         pass
 

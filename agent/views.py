@@ -149,6 +149,7 @@ class RunDetailView(View):
             "run": run,
             "tool_executions": tool_executions,
             "skill_bodies": _load_skill_bodies(run.triggered_skills or []),
+            "rag_matches": (run.graph_state or {}).get("rag_matches", []),
         }
         return render(request, self.template_name, ctx)
 
@@ -163,6 +164,7 @@ class RunStatusView(View):
                 "run": run,
                 "tool_executions": tool_executions,
                 "skill_bodies": _load_skill_bodies(run.triggered_skills or []),
+                "rag_matches": (run.graph_state or {}).get("rag_matches", []),
             },
             request=request,
         )
@@ -188,7 +190,7 @@ class RunRespondView(View):
             tool_executions = run.tool_executions.order_by("created_at")
             html = render_to_string(
                 "agent/_run_status.html",
-                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or [])},
+                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or []), "rag_matches": (run.graph_state or {}).get("rag_matches", [])},
                 request=request,
             )
             return HttpResponse(html)
@@ -208,7 +210,7 @@ class RunCancelView(View):
             tool_executions = run.tool_executions.order_by("created_at")
             html = render_to_string(
                 "agent/_run_status.html",
-                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or [])},
+                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or []), "rag_matches": (run.graph_state or {}).get("rag_matches", [])},
                 request=request,
             )
             return HttpResponse(html)
