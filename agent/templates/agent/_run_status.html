@@ -95,6 +95,49 @@
   </div>
   {% endif %}
 
+  {# Agent loop decision trace #}
+  {% if loop_trace %}
+  <div x-data="{ expanded: false }">
+    <button @click="expanded = !expanded" class="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 transition-colors cursor-pointer">
+      <span>Loop Trace</span>
+      <span class="text-gray-600">({{ loop_trace|length }} round{{ loop_trace|length|pluralize }}))</span>
+      <svg :class="expanded && 'rotate-180'" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+      </svg>
+    </button>
+    <div x-show="expanded" x-cloak class="mt-2 space-y-1">
+      {% for entry in loop_trace %}
+      <div class="flex items-start gap-2 text-xs">
+        {# Round connector line #}
+        <div class="flex flex-col items-center flex-shrink-0 w-5">
+          <span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold
+            {% if entry.decision == 'tool_call' %}bg-blue-900 text-blue-300
+            {% else %}bg-green-900 text-green-300{% endif %}">
+            {{ entry.round }}
+          </span>
+          {% if not forloop.last %}
+          <div class="w-px h-4 bg-gray-700"></div>
+          {% endif %}
+        </div>
+        <div class="pt-0.5 min-w-0">
+          {% if entry.decision == 'tool_call' %}
+            <span class="text-blue-400">🔧 Tool call:</span>
+            {% for tool in entry.tools %}
+              <code class="text-blue-300 font-mono">{{ tool }}</code>{% if not forloop.last %},{% endif %}
+            {% endfor %}
+          {% else %}
+            <span class="text-green-400">💬 Final answer</span>
+          {% endif %}
+          {% if entry.reasoning %}
+            <p class="text-gray-500 mt-0.5 break-words">{{ entry.reasoning|truncatewords:40 }}</p>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   {# Tool execution trace #}
   {% if tool_executions %}
   <div>

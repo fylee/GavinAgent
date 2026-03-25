@@ -474,6 +474,10 @@ def call_llm(state: AgentState) -> dict:
     choice = response.choices[0]
     message = choice.message
 
+    # ── Loop trace: record this round's decision ──────────────────────────
+    current_round = state.get("tool_call_rounds", 0) + 1
+    loop_trace = list(state.get("loop_trace") or [])
+
     if message.tool_calls:
         tool_calls = [
             {
@@ -483,10 +487,29 @@ def call_llm(state: AgentState) -> dict:
             }
             for tc in message.tool_calls
         ]
+
+        trace_entry = {
+            "round": current_round,
+            "decision": "tool_call",
+            "tools": [tc.function.name for tc in message.tool_calls],
+            "reasoning": (message.content or "").strip() or None,
+        }
+        loop_trace.append(trace_entry)
+
+        # Persist loop_trace to graph_state for UI display
+        try:
+            from agent.models import AgentRun as _AR
+            _ar = _AR.objects.get(pk=state["run_id"])
+            gs = _ar.graph_state or {}
+            gs["loop_trace"] = loop_trace
+            _AR.objects.filter(pk=state["run_id"]).update(graph_state=gs)
+        except Exception:
+            pass
+
         # Preserve the full assistant message so it can precede tool results next round.
         assistant_tool_call_message = {
             "role": "assistant",
-            "content": None,
+            "content": message.content if message.content else None,
             "tool_calls": [
                 {
                     "id": tc.id,
@@ -505,9 +528,29 @@ def call_llm(state: AgentState) -> dict:
             # Clear stale results from the previous round so they don't cause an
             # ID mismatch when call_llm is invoked again after execute_tools.
             "tool_results": [],
+            "loop_trace": loop_trace,
         }
 
-    return {"output": message.content or "", "pending_tool_calls": [], "assistant_tool_call_message": None, "tool_results": []}
+    # Final answer — no tool calls
+    trace_entry = {
+        "round": current_round,
+        "decision": "answer",
+        "tools": [],
+        "reasoning": None,
+    }
+    loop_trace.append(trace_entry)
+
+    # Persist loop_trace to graph_state for UI display
+    try:
+        from agent.models import AgentRun as _AR
+        _ar = _AR.objects.get(pk=state["run_id"])
+        gs = _ar.graph_state or {}
+        gs["loop_trace"] = loop_trace
+        _AR.objects.filter(pk=state["run_id"]).update(graph_state=gs)
+    except Exception:
+        pass
+
+    return {"output": message.content or "", "pending_tool_calls": [], "assistant_tool_call_message": None, "tool_results": [], "loop_trace": loop_trace}
 
 
 def check_approval(state: AgentState) -> dict:

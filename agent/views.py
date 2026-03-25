@@ -145,11 +145,13 @@ class RunDetailView(View):
     def get(self, request: HttpRequest, pk) -> HttpResponse:
         run = get_object_or_404(AgentRun.objects.select_related("agent"), pk=pk)
         tool_executions = run.tool_executions.order_by("created_at")
+        gs = run.graph_state or {}
         ctx = {
             "run": run,
             "tool_executions": tool_executions,
             "skill_bodies": _load_skill_bodies(run.triggered_skills or []),
-            "rag_matches": (run.graph_state or {}).get("rag_matches", []),
+            "rag_matches": gs.get("rag_matches", []),
+            "loop_trace": gs.get("loop_trace", []),
         }
         return render(request, self.template_name, ctx)
 
@@ -158,13 +160,15 @@ class RunStatusView(View):
     def get(self, request: HttpRequest, pk) -> HttpResponse:
         run = get_object_or_404(AgentRun, pk=pk)
         tool_executions = run.tool_executions.order_by("created_at")
+        gs = run.graph_state or {}
         html = render_to_string(
             "agent/_run_status.html",
             {
                 "run": run,
                 "tool_executions": tool_executions,
                 "skill_bodies": _load_skill_bodies(run.triggered_skills or []),
-                "rag_matches": (run.graph_state or {}).get("rag_matches", []),
+                "rag_matches": gs.get("rag_matches", []),
+                "loop_trace": gs.get("loop_trace", []),
             },
             request=request,
         )
@@ -188,9 +192,10 @@ class RunRespondView(View):
 
         if request.htmx:
             tool_executions = run.tool_executions.order_by("created_at")
+            gs = run.graph_state or {}
             html = render_to_string(
                 "agent/_run_status.html",
-                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or []), "rag_matches": (run.graph_state or {}).get("rag_matches", [])},
+                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or []), "rag_matches": gs.get("rag_matches", []), "loop_trace": gs.get("loop_trace", [])},
                 request=request,
             )
             return HttpResponse(html)
@@ -208,9 +213,10 @@ class RunCancelView(View):
 
         if request.htmx:
             tool_executions = run.tool_executions.order_by("created_at")
+            gs = run.graph_state or {}
             html = render_to_string(
                 "agent/_run_status.html",
-                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or []), "rag_matches": (run.graph_state or {}).get("rag_matches", [])},
+                {"run": run, "tool_executions": tool_executions, "skill_bodies": _load_skill_bodies(run.triggered_skills or []), "rag_matches": gs.get("rag_matches", []), "loop_trace": gs.get("loop_trace", [])},
                 request=request,
             )
             return HttpResponse(html)
