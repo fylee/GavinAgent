@@ -25,6 +25,18 @@ class AgentConfig(AppConfig):
         try:
             loader = SkillLoader(skills_dir)
             loader.load_all(registry)
+
+            # Sync loaded skills to DB (create missing rows, don't overwrite enabled flag)
+            from agent.models import Skill
+            for name, entry in registry.all().items():
+                Skill.objects.get_or_create(
+                    name=name,
+                    defaults={
+                        "description": entry.description,
+                        "path": entry.path,
+                        "enabled": True,
+                    },
+                )
         except Exception:
             pass
 
