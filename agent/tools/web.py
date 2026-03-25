@@ -12,8 +12,9 @@ class WebReadTool(BaseTool):
     name = "web_read"
     description = (
         "Fetch a web page and return its content as clean, readable markdown. "
-        "Use this for news sites, documentation, articles, or any human-readable page. "
-        "For JSON/REST APIs use api_get instead."
+        "IMPORTANT: Only use this when you already have a specific URL (e.g. from "
+        "web_search results). If you need to find information but don't know the "
+        "exact URL, use web_search first to discover relevant pages."
     )
     approval_policy = ApprovalPolicy.AUTO
     parameters = {

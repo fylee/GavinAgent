@@ -10,7 +10,11 @@ from .base import ApprovalPolicy, BaseTool, ToolResult
 
 class ApiGetTool(BaseTool):
     name = "api_get"
-    description = "Make an HTTP GET request to a URL and return the response body."
+    description = (
+        "Make an HTTP GET request to a URL and return the response body. "
+        "Only use this when you have a known API endpoint or exact URL. "
+        "If you need to find information on the web, use web_search first."
+    )
     approval_policy = ApprovalPolicy.AUTO
     parameters = {
         "type": "object",
