@@ -1,29 +1,11 @@
 from __future__ import annotations
 
-import re
 import time
 from typing import Any
 
 from django.conf import settings
 
 from .base import ApprovalPolicy, BaseTool, ToolResult
-
-
-def _html_to_text(html: str) -> str:
-    """Best-effort HTML → plain text conversion without heavy dependencies."""
-    # Remove script/style blocks
-    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    # Replace common block tags with newlines
-    text = re.sub(r"<(br|p|div|h[1-6]|li|tr)[^>]*>", "\n", text, flags=re.IGNORECASE)
-    # Strip remaining tags
-    text = re.sub(r"<[^>]+>", "", text)
-    # Decode common entities
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&nbsp;", " ").replace("&quot;", '"')
-    # Collapse whitespace
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r"[ \t]+", " ", text)
-    return text.strip()
 
 
 class WebReadTool(BaseTool):
@@ -53,17 +35,12 @@ class WebReadTool(BaseTool):
         timeout = getattr(settings, "AGENT_TOOL_TIMEOUT_SECONDS", 30)
 
         content = None
-        # 1. Try Jina reader first (produces clean markdown)
-        reader_url = f"https://r.jina.ai/{url}"
-        headers = {
-            "Accept": "text/plain",
-            "X-Return-Format": "markdown",
-        }
 
+        # 1. Try Jina reader first (produces clean markdown)
         try:
             resp = httpx.get(
-                reader_url,
-                headers=headers,
+                f"https://r.jina.ai/{url}",
+                headers={"Accept": "text/plain", "X-Return-Format": "markdown"},
                 timeout=timeout,
                 follow_redirects=True,
             )
@@ -72,17 +49,25 @@ class WebReadTool(BaseTool):
         except Exception:
             pass
 
-        # 2. Fallback: direct fetch + HTML-to-text
+        # 2. Fallback: direct fetch + trafilatura content extraction
         if not content:
             try:
+                import trafilatura
+
                 resp = httpx.get(
                     url,
                     timeout=timeout,
                     follow_redirects=True,
-                    headers={"User-Agent": "Mozilla/5.0 (compatible; GavinAgent/1.0)"},
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"},
                 )
                 resp.raise_for_status()
-                content = _html_to_text(resp.text)
+                extracted = trafilatura.extract(
+                    resp.text,
+                    include_links=True,
+                    include_tables=True,
+                    output_format="txt",
+                )
+                content = extracted or resp.text[:max_chars]
             except Exception as e:
                 return ToolResult(
                     output=None,

@@ -27,15 +27,38 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
 
 
 def _fetch_url_content(url: str) -> str:
-    """Fetch page content via Jina reader, same approach as web_read tool."""
+    """Fetch page content: try Jina reader first, fall back to trafilatura."""
     import httpx
 
-    reader_url = f"https://r.jina.ai/{url}"
-    headers = {"Accept": "text/plain", "X-Return-Format": "markdown"}
     timeout = getattr(settings, "AGENT_TOOL_TIMEOUT_SECONDS", 30)
-    resp = httpx.get(reader_url, headers=headers, timeout=timeout, follow_redirects=True)
+
+    # 1. Try Jina reader
+    try:
+        resp = httpx.get(
+            f"https://r.jina.ai/{url}",
+            headers={"Accept": "text/plain", "X-Return-Format": "markdown"},
+            timeout=timeout,
+            follow_redirects=True,
+        )
+        if resp.status_code < 400:
+            return resp.text
+    except Exception:
+        pass
+
+    # 2. Fallback: direct fetch + trafilatura
+    import trafilatura
+
+    resp = httpx.get(
+        url,
+        timeout=timeout,
+        follow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"},
+    )
     resp.raise_for_status()
-    return resp.text
+    extracted = trafilatura.extract(resp.text, include_links=True, include_tables=True, output_format="txt")
+    if not extracted:
+        raise ValueError(f"Could not extract content from {url}")
+    return extracted
 
 
 def _extract_pdf_text(content_bytes: bytes) -> str:
