@@ -146,6 +146,9 @@ RAG_CHUNK_OVERLAP_TOKENS = config("RAG_CHUNK_OVERLAP_TOKENS", default=50, cast=i
 RAG_SEARCH_LIMIT = config("RAG_SEARCH_LIMIT", default=5, cast=int)
 RAG_SIMILARITY_THRESHOLD = config("RAG_SIMILARITY_THRESHOLD", default=0.3, cast=float)
 
+# SearXNG — web search engine (used by web_search tool)
+SEARXNG_URL = config("SEARXNG_URL", default="http://localhost:8888")
+
 # MCP — Fernet encryption keys for MCPServer.env field
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 FERNET_KEYS = [

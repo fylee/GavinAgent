@@ -1,0 +1,56 @@
+# SearXNG settings — JSON API must be enabled for GavinAgent's web_search tool.
+#
+# On first docker compose up, SearXNG generates its own settings.yml inside the
+# container volume. You need to enable the JSON format manually:
+#
+# Option A: Edit the generated settings.yml inside the volume
+#   1. docker compose up -d searxng
+#   2. docker compose exec searxng cat /etc/searxng/settings.yml > searxng-settings.yml
+#   3. Edit searxng-settings.yml and set:
+#        search:
+#          formats:
+#            - html
+#            - json
+#   4. Copy it back: docker compose cp searxng-settings.yml searxng:/etc/searxng/settings.yml
+#   5. docker compose restart searxng
+#
+# Option B: Mount this file directly in docker-compose.yml (uncomment volume below):
+#   volumes:
+#     - ./searxng-settings.yml:/etc/searxng/settings.yml:ro
+#
+# Minimal settings for API access:
+
+use_default_settings: true
+
+server:
+  secret_key: "change-me-to-a-random-string"
+  bind_address: "0.0.0.0"
+  port: 8080
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: dd
+    disabled: false
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: w
+    disabled: false
