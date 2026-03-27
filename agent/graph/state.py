@@ -22,5 +22,6 @@ class AgentState(TypedDict):
     failed_tool_signatures: list[str]  # "tool_name|arg_hash" combos that already errored
     succeeded_tool_signatures: list[str]  # "tool_name|arg_hash" combos that already succeeded
     collected_markdown: list[str]  # markdown snippets from tool outputs (e.g. chart images), persisted across rounds
+    search_result_urls: list[str]  # URLs from web_search results, used for automatic web_read fallback
     loop_trace: list[dict]  # per-round decision log: [{round, decision, tools, reasoning}]
     error: str | None

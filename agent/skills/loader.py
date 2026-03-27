@@ -66,7 +66,7 @@ class SkillLoader:
 
 
 def _load_handler(path: Path, skill_name: str) -> Callable | None:
-    """Dynamically import handler.py and return its `run` function."""
+    """Dynamically import handler.py and return its `handle` function."""
     module_name = f"_skill_{skill_name.replace('-', '_')}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
@@ -77,4 +77,5 @@ def _load_handler(path: Path, skill_name: str) -> Callable | None:
         spec.loader.exec_module(module)
     except Exception:
         return None
-    return getattr(module, "run", None)
+    # Prefer handle() (matches RunSkillTool), fall back to run() for compat
+    return getattr(module, "handle", None) or getattr(module, "run", None)

@@ -100,11 +100,28 @@ LITELLM_DEFAULT_MODEL = config("LITELLM_DEFAULT_MODEL", default="openai/gpt-4o-m
 LLM_TIMEOUT_SECONDS = config("LLM_TIMEOUT_SECONDS", default=120, cast=int)
 
 AVAILABLE_MODELS = [
+    # OpenAI (direct)
     ("openai/gpt-4o-mini", "GPT-4o mini"),
     ("openai/gpt-4o", "GPT-4o"),
+    # Anthropic
     ("anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6"),
     ("anthropic/claude-opus-4-6", "Claude Opus 4.6"),
+    # Azure OpenAI — requires AZURE_API_KEY, AZURE_API_BASE, AZURE_API_VERSION
+    ("azure/gpt-4o", "GPT-4o (Azure)"),
+    ("azure/gpt-4o-mini", "GPT-4o mini (Azure)"),
+    ("azure/gpt-4.1", "GPT-4.1 (Azure)"),
+    ("azure/gpt-5", "GPT-5 (Azure)"),
+    # Azure AI Model Catalog — requires AZURE_AI_API_KEY
+    ("azure_ai/deepseek-r1", "DeepSeek-R1 (Azure AI)"),
+    # Ollama (local) — requires Ollama running on OLLAMA_API_BASE
+    ("ollama/llama3", "Llama 3 (Local)"),
+    ("ollama/mistral", "Mistral (Local)"),
+    ("ollama/phi3", "Phi-3 (Local)"),
 ]
+
+# Embedding model — supports same provider prefixes as LiteLLM
+# Examples: "openai/text-embedding-3-small", "azure/text-embedding-3-large"
+EMBEDDING_MODEL = config("EMBEDDING_MODEL", default="openai/text-embedding-3-small")
 
 # Agent workspace
 AGENT_WORKSPACE_DIR = config(

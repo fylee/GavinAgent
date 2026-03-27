@@ -220,12 +220,32 @@ class MessageStreamView(View):
                         request=request,
                     )
                     return HttpResponse(html)
-            # Agent is PENDING or RUNNING (or WAITING with no pending TE yet) — keep polling
-            html = render_to_string(
-                "chat/_typing_indicator.html",
-                {"conversation": conversation, "user_msg_id": user_msg.id},
-                request=request,
+            # Agent is PENDING or RUNNING (or WAITING with no pending TE yet)
+            # Fetch all tool executions so far to show progress
+            tool_executions = list(
+                ToolExecution.objects.filter(run=active_agent_run)
+                .order_by("created_at")
             )
+            triggered_skills = active_agent_run.triggered_skills or []
+            loop_trace = (active_agent_run.graph_state or {}).get("loop_trace", [])
+            if tool_executions or triggered_skills:
+                html = render_to_string(
+                    "chat/_tool_progress.html",
+                    {
+                        "conversation": conversation,
+                        "user_msg_id": user_msg.id,
+                        "tool_executions": tool_executions,
+                        "triggered_skills": triggered_skills,
+                        "loop_trace": loop_trace,
+                    },
+                    request=request,
+                )
+            else:
+                html = render_to_string(
+                    "chat/_typing_indicator.html",
+                    {"conversation": conversation, "user_msg_id": user_msg.id},
+                    request=request,
+                )
             return HttpResponse(html)
 
         # No active agent — check for the regular assistant reply

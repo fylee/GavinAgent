@@ -28,16 +28,10 @@ class WebReadTool(BaseTool):
         "required": ["url"],
     }
 
-    def execute(self, url: str, **kwargs: Any) -> ToolResult:
+    def _fetch_jina(self, url: str, timeout: float) -> str | None:
+        """Try Jina Reader — returns markdown or None."""
         import httpx
 
-        start = time.monotonic()
-        max_chars = getattr(settings, "MAX_TOOL_OUTPUT_CHARS", 8000)
-        timeout = getattr(settings, "AGENT_TOOL_TIMEOUT_SECONDS", 30)
-
-        content = None
-
-        # 1. Try Jina reader first (produces clean markdown)
         try:
             resp = httpx.get(
                 f"https://r.jina.ai/{url}",
@@ -45,36 +39,68 @@ class WebReadTool(BaseTool):
                 timeout=timeout,
                 follow_redirects=True,
             )
-            if resp.status_code < 400:
-                content = resp.text
+            if resp.status_code < 400 and resp.text.strip():
+                return resp.text
         except Exception:
             pass
+        return None
 
-        # 2. Fallback: direct fetch + trafilatura content extraction
+    def _fetch_direct(self, url: str, timeout: float, max_chars: int) -> str | None:
+        """Direct fetch + trafilatura extraction — returns text or None."""
+        import httpx
+
+        try:
+            import trafilatura
+
+            resp = httpx.get(
+                url,
+                timeout=timeout,
+                follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"},
+            )
+            resp.raise_for_status()
+            extracted = trafilatura.extract(
+                resp.text,
+                include_links=True,
+                include_tables=True,
+                output_format="txt",
+            )
+            return extracted or resp.text[:max_chars]
+        except Exception:
+            return None
+
+    def execute(self, url: str, **kwargs: Any) -> ToolResult:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        start = time.monotonic()
+        max_chars = getattr(settings, "MAX_TOOL_OUTPUT_CHARS", 8000)
+        timeout = getattr(settings, "AGENT_TOOL_TIMEOUT_SECONDS", 30)
+        jina_timeout = min(timeout, 10)  # cap Jina at 10s — it's fast or it won't work
+
+        content = None
+
+        # Race Jina vs direct fetch in parallel — use whichever finishes first
+        # with a valid result.  This eliminates the sequential waterfall.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            future_jina = pool.submit(self._fetch_jina, url, jina_timeout)
+            future_direct = pool.submit(self._fetch_direct, url, timeout, max_chars)
+
+            for future in as_completed([future_jina, future_direct], timeout=timeout + 2):
+                result = future.result()
+                if result:
+                    content = result
+                    break
+
         if not content:
-            try:
-                import trafilatura
-
-                resp = httpx.get(
-                    url,
-                    timeout=timeout,
-                    follow_redirects=True,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"},
-                )
-                resp.raise_for_status()
-                extracted = trafilatura.extract(
-                    resp.text,
-                    include_links=True,
-                    include_tables=True,
-                    output_format="txt",
-                )
-                content = extracted or resp.text[:max_chars]
-            except Exception as e:
-                return ToolResult(
-                    output=None,
-                    error=f"Both Jina reader and direct fetch failed for {url}: {e}",
-                    duration_ms=int((time.monotonic() - start) * 1000),
-                )
+            return ToolResult(
+                output=None,
+                error=(
+                    f"Both Jina reader and direct fetch failed for {url}. "
+                    "This site may block automated access. Try web_read on a "
+                    "different URL from your search results instead."
+                ),
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
 
         if len(content) > max_chars:
             content = content[:max_chars] + "\n\n...[content truncated at limit — do not re-read this URL]"

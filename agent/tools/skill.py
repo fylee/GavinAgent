@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,9 @@ from typing import Any
 from django.conf import settings
 
 from .base import ApprovalPolicy, BaseTool, ToolResult
+
+# Pattern to find markdown image syntax in handler results
+_MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
 
 
 class RunSkillTool(BaseTool):
@@ -62,8 +66,14 @@ class RunSkillTool(BaseTool):
                 )
 
             result = module.handle(input)
+            output_dict: dict[str, Any] = {"result": result}
+            # Extract markdown images so collected_markdown tracking works
+            if isinstance(result, str):
+                md_images = _MD_IMAGE_RE.findall(result)
+                if md_images:
+                    output_dict["markdown"] = "\n".join(md_images)
             return ToolResult(
-                output={"result": result},
+                output=output_dict,
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
         except Exception as exc:

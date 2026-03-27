@@ -3,9 +3,10 @@ from django.conf import settings
 
 
 def embed_text(text: str) -> list[float]:
-    """Generate embedding via litellm."""
+    """Generate embedding via litellm (model controlled by EMBEDDING_MODEL setting)."""
     import litellm
-    response = litellm.embedding(model="openai/text-embedding-3-small", input=[text])
+    model = getattr(settings, "EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    response = litellm.embedding(model=model, input=[text])
     return response.data[0]["embedding"]
 
 

@@ -166,10 +166,10 @@ def _build_knowledge_section(query: str) -> tuple[str, list[dict]]:
     return "\n\n".join(parts), matched_docs
 
 
-def _build_system_context(query: str) -> tuple[str, list[str]]:
+def _build_system_context(query: str) -> tuple[str, list[str], list[dict]]:
     """Assemble system prompt from workspace files, memories, and MCP resources.
 
-    Returns (system_prompt, triggered_skill_names).
+    Returns (system_prompt, triggered_skill_names, rag_matches).
     """
     from datetime import datetime
     import zoneinfo
@@ -225,9 +225,9 @@ def _build_system_context(query: str) -> tuple[str, list[str]]:
     content += (
         "\n\n---\n\n"
         "## Tool output formatting rule\n\n"
-        "When a tool result contains a `markdown` field, you MUST copy that value "
-        "verbatim into your reply. Never describe or paraphrase it — reproduce it exactly "
-        "as-is so that images and links render correctly."
+        "When a tool result contains a `markdown` field, please copy that value "
+        "verbatim into your reply. Do not describe or paraphrase it — reproduce it "
+        "exactly as-is so that images and links render correctly."
     )
 
     return content, triggered, rag_matches
@@ -374,19 +374,32 @@ def call_llm(state: AgentState) -> dict:
                 required_ids - result_ids,
             )
 
-    # If tool outputs produced markdown (e.g. chart images) in a previous round,
-    # remind the LLM to include them verbatim in its final answer.
+    # If tool outputs produced markdown (e.g. chart images), remind the LLM
+    # to include them verbatim and — crucially — to stop calling more tools.
     collected_markdown = list(state.get("collected_markdown") or [])
-    if collected_markdown and not tool_results:
-        # Only inject when we're on a concluding round (no new tool results to process)
+    if collected_markdown:
         verbatim = "\n".join(collected_markdown)
-        messages.append({
-            "role": "user",
-            "content": (
-                f"Your response MUST include the following markdown verbatim "
-                f"(copy it exactly — do not describe or paraphrase it):\n\n{verbatim}"
-            ),
-        })
+        if not tool_results:
+            # Concluding round (no new tool results to process)
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"Please include the following markdown verbatim in your response "
+                    f"(copy it exactly — do not describe or paraphrase it):\n\n{verbatim}"
+                ),
+            })
+        else:
+            # Tool results are present but a chart/image was already generated
+            # in a prior round — tell the LLM the task is essentially complete.
+            messages.append({
+                "role": "user",
+                "content": (
+                    "A chart or visual output has already been generated successfully. "
+                    "You can now compose your final answer using the results you already "
+                    "have. Please include the following markdown verbatim in your "
+                    f"response:\n\n{verbatim}"
+                ),
+            })
 
     # Build tool schemas — filtered to only tools enabled on this agent
     from agent.models import Agent as AgentModel
@@ -433,7 +446,11 @@ def call_llm(state: AgentState) -> dict:
     else:
         tools_schema = []
 
-    tools_schema.extend(skill_registry.to_llm_tools())
+    # Note: we intentionally do NOT call skill_registry.to_llm_tools() here.
+    # Handler-based skills are invoked via the `run_skill` built-in tool, which
+    # is auto-injected when a triggered skill has a handler.py.  Exposing them
+    # as separate `skill_<name>` functions would create duplicate tool paths
+    # that confuse the LLM and lack a matching executor in execute_tools.
     try:
         from agent.mcp.registry import get_registry as get_mcp_registry
         tools_schema.extend(get_mcp_registry().to_llm_schemas())
@@ -699,6 +716,7 @@ def execute_tools(state: AgentState) -> dict:
     failed_sigs = list(state.get("failed_tool_signatures") or [])
     succeeded_sigs = list(state.get("succeeded_tool_signatures") or [])
     collected_markdown = list(state.get("collected_markdown") or [])
+    search_result_urls = list(state.get("search_result_urls") or [])
 
     for tc in pending:
         tool_name = tc["name"]
@@ -814,13 +832,88 @@ def execute_tools(state: AgentState) -> dict:
         tool_results.append({"tool_call_id": tc_id, "result": result})
         if result.get("error"):
             failed_sigs.append(sig)
+
+            # ── Auto-fallback: when web_read fails, try the next untried URL
+            # from recent search results.  This is deterministic — no LLM
+            # decision needed — and prevents the agent from giving up after
+            # one blocked site.
+            if tool_name == "web_read":
+                max_fallback = getattr(settings, "AGENT_WEB_READ_FALLBACK_LIMIT", 3)
+                fallback_tried = 0
+                for fallback_url in list(search_result_urls):
+                    if fallback_tried >= max_fallback:
+                        break
+                    if fallback_url in visited_urls:
+                        continue
+                    visited_urls.append(fallback_url)
+                    fallback_tried += 1
+                    logger.info("web_read auto-fallback: trying %s", fallback_url)
+                    fallback_tool = get_tool("web_read")
+                    try:
+                        fallback_result = fallback_tool.execute(url=fallback_url)
+                        fb_dict = fallback_result.as_dict()
+                        fb_sig = _tool_sig("web_read", {"url": fallback_url})
+                        if fallback_result.success:
+                            succeeded_sigs.append(fb_sig)
+                            # Replace the error result with the successful fallback
+                            tool_results[-1] = {
+                                "tool_call_id": tc_id,
+                                "result": fb_dict,
+                            }
+                            # Create audit record for the successful fallback
+                            run_obj = AgentRun.objects.filter(pk=state["run_id"]).first()
+                            if run_obj:
+                                ToolExecution.objects.create(
+                                    run=run_obj,
+                                    tool_name="web_read",
+                                    input={"url": fallback_url},
+                                    output=fb_dict,
+                                    status=ToolExecution.Status.SUCCESS,
+                                    duration_ms=fallback_result.duration_ms,
+                                    requires_approval=False,
+                                )
+                            logger.info("web_read auto-fallback succeeded: %s", fallback_url)
+                            break
+                        else:
+                            failed_sigs.append(fb_sig)
+                            # Create audit record for the failed fallback
+                            run_obj = AgentRun.objects.filter(pk=state["run_id"]).first()
+                            if run_obj:
+                                ToolExecution.objects.create(
+                                    run=run_obj,
+                                    tool_name="web_read",
+                                    input={"url": fallback_url},
+                                    output=fb_dict,
+                                    status=ToolExecution.Status.ERROR,
+                                    duration_ms=fallback_result.duration_ms,
+                                    requires_approval=False,
+                                )
+                    except Exception as fb_exc:
+                        failed_sigs.append(_tool_sig("web_read", {"url": fallback_url}))
+                        logger.warning("web_read auto-fallback error for %s: %s", fallback_url, fb_exc)
         else:
             succeeded_sigs.append(sig)
             # Persist any markdown output (e.g. chart images) so it survives
             # across rounds even after tool_results is cleared.
             output = result.get("output", {})
-            if isinstance(output, dict) and output.get("markdown"):
-                collected_markdown.append(output["markdown"])
+            if isinstance(output, dict):
+                if output.get("markdown"):
+                    collected_markdown.append(output["markdown"])
+                # Also check nested 'result' from run_skill for markdown images
+                elif isinstance(output.get("result"), str):
+                    import re as _re
+                    _md_imgs = _re.findall(r"!\[[^\]]*\]\([^)]+\)", output["result"])
+                    if _md_imgs:
+                        collected_markdown.extend(_md_imgs)
+
+            # When web_search succeeds, pool the result URLs for web_read fallback.
+            if tool_name == "web_search":
+                search_output = result.get("output", {})
+                if isinstance(search_output, dict):
+                    for sr in search_output.get("results", []):
+                        url = sr.get("url", "")
+                        if url and url not in search_result_urls:
+                            search_result_urls.append(url)
 
     rounds = state.get("tool_call_rounds", 0) + 1
     return {
@@ -831,6 +924,7 @@ def execute_tools(state: AgentState) -> dict:
         "failed_tool_signatures": failed_sigs,
         "succeeded_tool_signatures": succeeded_sigs,
         "collected_markdown": collected_markdown,
+        "search_result_urls": search_result_urls,
     }
 
 
@@ -884,16 +978,15 @@ def force_conclude(state: AgentState) -> dict:
     if markdown_snippets:
         verbatim = "\n".join(markdown_snippets)
         markdown_instruction = (
-            f"\n\nIMPORTANT: Your response MUST include the following markdown verbatim "
+            f"\n\nPlease include the following markdown verbatim in your response "
             f"(do not paraphrase or describe it — copy it exactly):\n\n{verbatim}"
         )
 
     messages.append({
         "role": "user",
         "content": (
-            "All required tools have already run successfully. "
-            "Using the results above, compose your final answer now. "
-            "Do not call any more tools."
+            "All required tools have already been used successfully. "
+            "Using the results above, please compose your final answer now."
             + markdown_instruction
         ),
     })

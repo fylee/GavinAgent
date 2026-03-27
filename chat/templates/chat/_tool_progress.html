@@ -1,0 +1,127 @@
+<div id="typing-indicator"
+     hx-get="{% url 'chat:message-stream' conversation_pk=conversation.id pk=user_msg_id %}"
+     hx-trigger="every 1s"
+     hx-target="this"
+     hx-swap="outerHTML">
+  <div class="flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full">
+    <div class="flex-shrink-0 w-7 h-7 rounded-full bg-[#19c37d] flex items-center justify-center mt-0.5">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
+      </svg>
+    </div>
+    <div class="flex-1 min-w-0 space-y-2">
+
+      {# Triggered skills #}
+      {% if triggered_skills %}
+      <div class="flex items-center gap-1.5 flex-wrap">
+        {% for skill in triggered_skills %}
+        <span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-900/60 text-purple-300">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+          {{ skill }}
+        </span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Loop trace — round-by-round reasoning and tool executions #}
+      {% if loop_trace %}
+      <div class="space-y-2">
+        {% for entry in loop_trace %}
+        <div class="space-y-1">
+          {# Round reasoning #}
+          {% if entry.reasoning %}
+          <div class="flex items-start gap-1.5">
+            <span class="flex-shrink-0 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center mt-0.5
+              {% if entry.decision == 'tool_call' %}bg-blue-900/60 text-blue-300
+              {% else %}bg-green-900/60 text-green-300{% endif %}">
+              {{ entry.round }}
+            </span>
+            <p class="text-[11px] text-gray-400 leading-relaxed italic">{{ entry.reasoning|truncatewords:30 }}</p>
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Tool execution progress — grouped with input details #}
+      {% if tool_executions %}
+      <div class="space-y-1">
+        {% for te in tool_executions %}
+        <div class="flex items-center gap-2 text-xs">
+          {# Status icon #}
+          {% if te.status == 'running' %}
+          <span class="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+            <span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+          </span>
+          {% elif te.status == 'success' %}
+          <span class="flex-shrink-0 w-4 h-4 flex items-center justify-center text-green-400">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+            </svg>
+          </span>
+          {% elif te.status == 'error' %}
+          <span class="flex-shrink-0 w-4 h-4 flex items-center justify-center text-red-400">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+            </svg>
+          </span>
+          {% elif te.status == 'rejected' %}
+          <span class="flex-shrink-0 w-4 h-4 flex items-center justify-center text-orange-400">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 008.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clip-rule="evenodd"/>
+            </svg>
+          </span>
+          {% elif te.status == 'pending' %}
+          <span class="flex-shrink-0 w-4 h-4 flex items-center justify-center text-yellow-400">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+            </svg>
+          </span>
+          {% endif %}
+
+          {# Tool name #}
+          <code class="font-mono text-blue-300">{{ te.tool_name }}</code>
+
+          {# Key input detail — shows what the tool is doing #}
+          {% if te.input.query %}
+          <span class="text-gray-500 truncate max-w-[220px]" title="{{ te.input.query }}">"{{ te.input.query|truncatewords:6 }}"</span>
+          {% elif te.input.url %}
+          <span class="text-gray-500 truncate max-w-[220px]" title="{{ te.input.url }}">{{ te.input.url|truncatechars:45 }}</span>
+          {% elif te.input.path %}
+          <span class="text-gray-500 truncate max-w-[220px]" title="{{ te.input.path }}">{{ te.input.path }}</span>
+          {% elif te.input.command %}
+          <span class="text-gray-500 truncate max-w-[220px]" title="{{ te.input.command }}">{{ te.input.command|truncatechars:40 }}</span>
+          {% endif %}
+
+          {# Status badge #}
+          <span class="px-1.5 py-0.5 rounded-full
+            {% if te.status == 'success' %}bg-green-900/60 text-green-300
+            {% elif te.status == 'error' %}bg-red-900/60 text-red-300
+            {% elif te.status == 'running' %}bg-blue-900/60 text-blue-300
+            {% elif te.status == 'rejected' %}bg-orange-900/60 text-orange-300
+            {% elif te.status == 'pending' %}bg-yellow-900/60 text-yellow-300
+            {% else %}bg-gray-700 text-gray-300{% endif %}">
+            {{ te.get_status_display }}
+          </span>
+
+          {# Duration #}
+          {% if te.duration_ms %}
+          <span class="text-gray-500">{{ te.duration_ms }}ms</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Thinking dots — still working #}
+      <div class="flex items-center gap-1 py-1">
+        <span class="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0ms"></span>
+        <span class="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 150ms"></span>
+        <span class="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 300ms"></span>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,6 +1,6 @@
 <div id="typing-indicator"
      hx-get="{% url 'chat:message-stream' conversation_pk=conversation.id pk=user_msg_id %}"
-     hx-trigger="every 2s"
+     hx-trigger="every 1s"
      hx-target="this"
      hx-swap="outerHTML">
   <div class="flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full">
