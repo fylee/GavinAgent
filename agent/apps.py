@@ -57,9 +57,8 @@ class AgentConfig(AppConfig):
                 pass
         threading.Thread(target=_embed_skills, daemon=True).start()
 
-        # Start MCP connection pool (connects all enabled MCP servers)
-        try:
-            from agent.mcp.pool import MCPConnectionPool
-            MCPConnectionPool.get().start_all()
-        except Exception:
-            pass
+        # MCP connection pool is started exclusively by the Celery worker_init
+        # signal (config/celery.py). Do NOT start it here — the Django dev server
+        # runs ready() in multiple processes (autoreloader parent + child) and
+        # would compete with the Celery worker for the same SSE connections,
+        # leaving the worker's registry empty.

@@ -41,6 +41,10 @@ def _after_execute_tools(state: AgentState) -> str:
     max_rounds = getattr(settings, "AGENT_MAX_TOOL_CALL_ROUNDS", 20)
     if state.get("tool_call_rounds", 0) >= max_rounds:
         return "force_conclude"
+    # If every tool in the last N rounds failed, stop asking the LLM to retry.
+    max_consecutive_failures = getattr(settings, "AGENT_MAX_CONSECUTIVE_FAILED_ROUNDS", 2)
+    if state.get("consecutive_failed_rounds", 0) >= max_consecutive_failures:
+        return "force_conclude"
     return "call_llm"
 
 

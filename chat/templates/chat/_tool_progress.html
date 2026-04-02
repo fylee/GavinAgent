@@ -25,6 +25,20 @@
       </div>
       {% endif %}
 
+      {# Active MCP servers #}
+      {% if mcp_servers_active %}
+      <div class="flex items-center gap-1.5 flex-wrap">
+        {% for server in mcp_servers_active %}
+        <span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-teal-900/60 text-teal-300">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+          {{ server }}
+        </span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
       {# Loop trace — round-by-round reasoning and tool executions #}
       {% if loop_trace %}
       <div class="space-y-2">
@@ -82,8 +96,8 @@
           </span>
           {% endif %}
 
-          {# Tool name #}
-          <code class="font-mono text-blue-300">{{ te.tool_name }}</code>
+          {# Tool name — strip MCP server prefix for cleaner display #}
+          <code class="font-mono {% if te.is_mcp %}text-teal-300{% else %}text-blue-300{% endif %}">{{ te.display_name }}</code>
 
           {# Key input detail — shows what the tool is doing #}
           {% if te.input.query %}
@@ -96,16 +110,22 @@
           <span class="text-gray-500 truncate max-w-[220px]" title="{{ te.input.command }}">{{ te.input.command|truncatechars:40 }}</span>
           {% endif %}
 
-          {# Status badge #}
-          <span class="px-1.5 py-0.5 rounded-full
+          {# Status badge — show error message as tooltip #}
+          <span class="px-1.5 py-0.5 rounded-full cursor-default
             {% if te.status == 'success' %}bg-green-900/60 text-green-300
             {% elif te.status == 'error' %}bg-red-900/60 text-red-300
             {% elif te.status == 'running' %}bg-blue-900/60 text-blue-300
             {% elif te.status == 'rejected' %}bg-orange-900/60 text-orange-300
             {% elif te.status == 'pending' %}bg-yellow-900/60 text-yellow-300
-            {% else %}bg-gray-700 text-gray-300{% endif %}">
+            {% else %}bg-gray-700 text-gray-300{% endif %}"
+            {% if te.status == 'error' and te.output.error %}title="{{ te.output.error }}"{% endif %}>
             {{ te.get_status_display }}
           </span>
+
+          {# Inline error detail for failed tool calls #}
+          {% if te.status == 'error' and te.output.error %}
+          <span class="text-red-400/70 text-[10px] truncate max-w-[280px]" title="{{ te.output.error }}">{{ te.output.error|truncatechars:60 }}</span>
+          {% endif %}
 
           {# Duration #}
           {% if te.duration_ms %}

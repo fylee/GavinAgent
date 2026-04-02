@@ -228,7 +228,36 @@ class MessageStreamView(View):
             )
             triggered_skills = active_agent_run.triggered_skills or []
             loop_trace = (active_agent_run.graph_state or {}).get("loop_trace", [])
-            if tool_executions or triggered_skills:
+            # MCP servers: prefer graph_state (set early by call_llm), supplement
+            # with any from actual tool executions (tool_name like "Server__tool")
+            graph_state = active_agent_run.graph_state or {}
+            mcp_from_state = graph_state.get("mcp_servers_active", [])
+            # Resolve MCP server names from tool executions using the registry
+            # so we get the original server_name (e.g. "EDWM MCP") not the
+            # sanitized llm_function_name prefix (e.g. "EDWM_MCP").
+            try:
+                from agent.mcp.registry import get_registry as get_mcp_registry
+                _mcp_reg = get_mcp_registry()
+            except Exception:
+                _mcp_reg = None
+            mcp_from_executions = []
+            for te in tool_executions:
+                if "__" not in te.tool_name:
+                    continue
+                entry = _mcp_reg.get(te.tool_name) if _mcp_reg else None
+                mcp_from_executions.append(
+                    entry.server_name if entry else te.tool_name.split("__")[0]
+                )
+            mcp_servers_active = sorted(set(mcp_from_state) | set(mcp_from_executions))
+            # Annotate each execution with a clean display name and MCP flag
+            for te in tool_executions:
+                if "__" in te.tool_name:
+                    te.display_name = te.tool_name.split("__", 1)[1]
+                    te.is_mcp = True
+                else:
+                    te.display_name = te.tool_name
+                    te.is_mcp = False
+            if tool_executions or triggered_skills or mcp_servers_active:
                 html = render_to_string(
                     "chat/_tool_progress.html",
                     {
@@ -236,6 +265,7 @@ class MessageStreamView(View):
                         "user_msg_id": user_msg.id,
                         "tool_executions": tool_executions,
                         "triggered_skills": triggered_skills,
+                        "mcp_servers_active": mcp_servers_active,
                         "loop_trace": loop_trace,
                     },
                     request=request,

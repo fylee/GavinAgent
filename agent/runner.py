@@ -58,10 +58,29 @@ class AgentRunner:
             # status == RUNNING means approved — execute it now
             tool = get_tool(tc["name"])
             if tool is None:
-                result = {"error": f"Unknown tool: {tc['name']}"}
-                te.status = ToolExecution.Status.ERROR
-                te.output = result
-                te.save(update_fields=["status", "output"])
+                # Check MCP registry — tool_name may be an MCP tool (Server__tool)
+                try:
+                    from agent.mcp.registry import get_registry as get_mcp_registry
+                    from agent.mcp.pool import MCPConnectionPool
+                    mcp_entry = get_mcp_registry().get(tc["name"])
+                    if mcp_entry:
+                        mcp_result = MCPConnectionPool.get().call_tool(
+                            mcp_entry.server_name, mcp_entry.tool_name, tc.get("arguments", {})
+                        )
+                        result = {"output": mcp_result}
+                        te.status = ToolExecution.Status.SUCCESS
+                        te.output = result
+                        te.save(update_fields=["status", "output"])
+                    else:
+                        result = {"error": f"Unknown tool: {tc['name']}"}
+                        te.status = ToolExecution.Status.ERROR
+                        te.output = result
+                        te.save(update_fields=["status", "output"])
+                except Exception as exc:
+                    result = {"error": f"Tool execution error: {exc}"}
+                    te.status = ToolExecution.Status.ERROR
+                    te.output = result
+                    te.save(update_fields=["status", "output"])
             else:
                 try:
                     tool_result = tool.execute(**tc.get("arguments", {}))

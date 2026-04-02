@@ -48,12 +48,58 @@ class MCPConnectionPool:
     # ── public sync API ────────────────────────────────────────────────────
 
     def start_all(self) -> None:
-        """Connect all enabled MCP servers. Called on Django/Celery startup."""
+        """Connect all enabled MCP servers and wait for tool discovery. Called on Django/Celery startup."""
         future = asyncio.run_coroutine_threadsafe(self._start_all_async(), self._loop)
         try:
-            future.result(timeout=5)
+            future.result(timeout=30)
         except Exception as exc:
-            logger.error("MCP pool start_all error: %s", exc)
+            logger.error("MCP pool start_all error: %s", exc, exc_info=True)
+        # Start background retry loop so newly-added servers and transient
+        # failures are healed without requiring a restart.
+        threading.Thread(target=self._retry_loop, daemon=True, name="mcp-retry").start()
+
+    def _retry_loop(self) -> None:
+        """Background thread: every 60 s reconnect any server that is not connected."""
+        import time
+        first_run = True
+        while True:
+            # Check quickly on first iteration (10 s) to catch startup race conditions,
+            # then settle to 60 s intervals.
+            time.sleep(10 if first_run else 60)
+            first_run = False
+            try:
+                from agent.models import MCPServer
+                servers = list(MCPServer.objects.filter(enabled=True))
+                reg = get_registry()
+                tool_count = len(reg.all())
+                logger.info("MCP registry health: %d tools registered", tool_count)
+                for server in servers:
+                    if self.get_status(server.name) != "connected":
+                        logger.info("MCP retry: reconnecting %s", server.name)
+                        self.start_server(server)
+                    else:
+                        # Server connected but registry empty → re-discover tools
+                        server_tools = [
+                            t for t in reg.all().values()
+                            if t.server_name == server.name
+                        ]
+                        if not server_tools:
+                            logger.warning(
+                                "MCP server %s connected but no tools in registry — re-discovering",
+                                server.name,
+                            )
+                            conn = self._connections.get(server.name)
+                            if conn and conn.session:
+                                future = asyncio.run_coroutine_threadsafe(
+                                    self._discover_tools(server.name, conn.session),
+                                    self._loop,
+                                )
+                                try:
+                                    future.result(timeout=15)
+                                except Exception as exc:
+                                    logger.error("MCP re-discover %s error: %s", server.name, exc)
+            except Exception as exc:
+                logger.debug("MCP retry loop error: %s", exc)
 
     def stop_all(self) -> None:
         future = asyncio.run_coroutine_threadsafe(self._stop_all_async(), self._loop)
@@ -149,10 +195,11 @@ class MCPConnectionPool:
             from agent.models import MCPServer
             from asgiref.sync import sync_to_async
             servers = await sync_to_async(lambda: list(MCPServer.objects.filter(enabled=True)))()
-            for server in servers:
-                await self._start_server_async(server)
+            tasks = [self._start_server_async(server) for server in servers]
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as exc:
-            logger.error("MCP _start_all_async error: %s", exc)
+            logger.error("MCP _start_all_async error: %s", exc, exc_info=True)
 
     async def _start_server_async(self, server) -> None:
         name = server.name
@@ -162,15 +209,21 @@ class MCPConnectionPool:
         conn = _ServerConnection()
         self._connections[name] = conn
 
+        ready_event = asyncio.Event()
+        error_event = asyncio.Event()
+
         async def on_ready(srv_name: str, session: Any) -> None:
             await self._discover_tools(srv_name, session)
             await self._update_db_status(srv_name, "connected")
+            ready_event.set()
 
         async def on_error(srv_name: str, error: str) -> None:
+            logger.error("MCP server '%s' connection error: %s", srv_name, error)
             await self._update_db_status(srv_name, "error", error)
             self._connections.pop(srv_name, None)
             self._tasks.pop(srv_name, None)
             get_registry().unregister_server(srv_name)
+            error_event.set()
 
         if server.transport == "stdio":
             coro = run_stdio_connection(
@@ -184,6 +237,21 @@ class MCPConnectionPool:
 
         task = self._loop.create_task(coro)
         self._tasks[name] = task
+
+        # Wait up to 25 s for ready or error so start_all knows discovery is done.
+        try:
+            done, _ = await asyncio.wait(
+                [asyncio.ensure_future(ready_event.wait()),
+                 asyncio.ensure_future(error_event.wait())],
+                timeout=25,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                logger.warning("MCP server '%s' did not connect within 25 s", name)
+            elif ready_event.is_set():
+                logger.info("MCP server '%s' ready", name)
+        except Exception as exc:
+            logger.error("MCP server '%s' wait error: %s", name, exc)
 
     async def _stop_server_async(self, server_name: str) -> None:
         conn = self._connections.pop(server_name, None)
@@ -242,10 +310,13 @@ class MCPConnectionPool:
             ]
             get_registry().register(server_name, entries)
             logger.info(
-                "MCP server %s: discovered %d tools", server_name, len(entries)
+                "MCP server %s: discovered %d tools: %s",
+                server_name,
+                len(entries),
+                [e.llm_function_name for e in entries],
             )
         except Exception as exc:
-            logger.error("MCP tool discovery failed for %s: %s", server_name, exc)
+            logger.error("MCP tool discovery failed for %s: %s", server_name, exc, exc_info=True)
 
     async def _update_db_status(
         self, server_name: str, status: str, error: str = ""

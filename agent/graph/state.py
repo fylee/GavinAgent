@@ -24,4 +24,6 @@ class AgentState(TypedDict):
     collected_markdown: list[str]  # markdown snippets from tool outputs (e.g. chart images), persisted across rounds
     search_result_urls: list[str]  # URLs from web_search results, used for automatic web_read fallback
     loop_trace: list[dict]  # per-round decision log: [{round, decision, tools, reasoning}]
+    blocked_mcp_servers: list[str]  # MCP server names whose tools cannot be resolved this run
+    consecutive_failed_rounds: int  # rounds where every tool call failed; resets on any success
     error: str | None

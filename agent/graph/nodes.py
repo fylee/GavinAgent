@@ -465,11 +465,23 @@ def call_llm(state: AgentState) -> dict:
         update_fields = {}
         if triggered_skills:
             update_fields["triggered_skills"] = triggered_skills
-        if rag_matches:
-            # Store RAG document matches in graph_state for UI display
+        if rag_matches or tools_schema:
+            # Store RAG document matches and active MCP servers in graph_state for UI display
             run_obj = AgentRun.objects.get(pk=state["run_id"])
             gs = run_obj.graph_state or {}
-            gs["rag_matches"] = rag_matches
+            if rag_matches:
+                gs["rag_matches"] = rag_matches
+            # Store names of connected MCP servers included in this call's tool list
+            try:
+                from agent.mcp.registry import get_registry as get_mcp_registry
+                mcp_server_names = sorted({
+                    entry.server_name
+                    for entry in get_mcp_registry().all().values()
+                }) if tools_schema else []
+            except Exception:
+                mcp_server_names = []
+            if mcp_server_names:
+                gs["mcp_servers_active"] = mcp_server_names
             update_fields["graph_state"] = gs
         if update_fields:
             AgentRun.objects.filter(pk=state["run_id"]).update(**update_fields)
@@ -642,10 +654,15 @@ def check_approval(state: AgentState) -> dict:
                 if mcp_entry:
                     server = MCPServer.objects.filter(name=mcp_entry.server_name).first()
                     requires = server is None or mcp_entry.tool_name not in (server.auto_approve_tools or [])
+                elif "__" in tool_name:
+                    # Looks like an MCP tool (Server__tool format) but registry is
+                    # temporarily empty. Auto-execute — execute_tools will handle
+                    # the "Unknown tool" error gracefully rather than blocking on approval.
+                    requires = False
                 else:
-                    requires = True  # unknown tool → always require approval
+                    requires = True  # truly unknown tool → require approval
             except Exception:
-                requires = True
+                requires = False if "__" in tool_name else True
         if requires:
             te = ToolExecution.objects.create(
                 run=run,
@@ -717,6 +734,7 @@ def execute_tools(state: AgentState) -> dict:
     succeeded_sigs = list(state.get("succeeded_tool_signatures") or [])
     collected_markdown = list(state.get("collected_markdown") or [])
     search_result_urls = list(state.get("search_result_urls") or [])
+    blocked_mcp_servers = list(state.get("blocked_mcp_servers") or [])
 
     for tc in pending:
         tool_name = tc["name"]
@@ -752,6 +770,18 @@ def execute_tools(state: AgentState) -> dict:
                 "result": {"error": f"Tool '{tool_name}' already ran successfully with these arguments this session. Do not call it again — use the previous result to complete your response."},
             })
             continue
+        # Block all tools from an MCP server that failed to resolve in a previous round.
+        # The server is unavailable (registry miss) — stop retrying with different args.
+        if "__" in tool_name:
+            server_prefix = tool_name.split("__")[0]
+            if server_prefix in blocked_mcp_servers:
+                tc_id = tc["id"]
+                tool_results.append({
+                    "tool_call_id": tc_id,
+                    "result": {"error": f"MCP server '{server_prefix}' is unavailable in this session. Do not call any of its tools — report that you could not access it."},
+                })
+                failed_sigs.append(sig)
+                continue
         tc_id = tc["id"]
 
         te_id = tc.get("tool_execution_id")
@@ -817,7 +847,18 @@ def execute_tools(state: AgentState) -> dict:
                             te.output = result
                             te.save(update_fields=["status", "output"])
                 else:
-                    result = {"error": f"Unknown tool: {tool_name}"}
+                    # Registry miss: the MCP server's tools were not discovered
+                    # (e.g. worker restarted before reconnecting). Block the whole
+                    # server for this run so the LLM stops retrying.
+                    if "__" in tool_name:
+                        server_prefix = tool_name.split("__")[0]
+                        if server_prefix not in blocked_mcp_servers:
+                            blocked_mcp_servers.append(server_prefix)
+                            logger.warning(
+                                "MCP server '%s' blocked for this run — tools not in registry",
+                                server_prefix,
+                            )
+                    result = {"error": "MCP server tools unavailable (server not connected). Do not retry — report the error to the user."}
                     if te:
                         te.status = ToolExecution.Status.ERROR
                         te.output = result
@@ -916,6 +957,11 @@ def execute_tools(state: AgentState) -> dict:
                             search_result_urls.append(url)
 
     rounds = state.get("tool_call_rounds", 0) + 1
+    # Count consecutive rounds where every tool call failed — used by the router
+    # to force-conclude early instead of letting the LLM retry indefinitely.
+    all_failed = all(r["result"].get("error") for r in tool_results) if tool_results else False
+    consecutive_failed = state.get("consecutive_failed_rounds", 0)
+    consecutive_failed = consecutive_failed + 1 if all_failed else 0
     return {
         "tool_results": tool_results,
         "pending_tool_calls": [],
@@ -925,6 +971,8 @@ def execute_tools(state: AgentState) -> dict:
         "succeeded_tool_signatures": succeeded_sigs,
         "collected_markdown": collected_markdown,
         "search_result_urls": search_result_urls,
+        "blocked_mcp_servers": blocked_mcp_servers,
+        "consecutive_failed_rounds": consecutive_failed,
     }
 
 
