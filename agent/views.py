@@ -1186,7 +1186,8 @@ class MCPServerDetailView(View):
         from agent.mcp.pool import MCPConnectionPool
         server = get_object_or_404(MCPServer, pk=pk)
 
-        server.name = request.POST.get("name", server.name).strip()
+        # Name is read-only after creation — keep the stored value unchanged.
+        # (Changing the name would break all tool namespace references.)
         server.transport = request.POST.get("transport", server.transport)
         server.command = request.POST.get("command", "").strip()
         server.url = request.POST.get("url", "").strip()

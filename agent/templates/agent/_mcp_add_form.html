@@ -17,14 +17,22 @@
     {% csrf_token %}
     <div id="mcp-form-error"></div>
 
-    {# Name #}
+    {# Name — read-only on edit to preserve existing tool namespacing #}
     <div>
       <label class="block text-xs text-gray-400 mb-1">Name <span class="text-red-400">*</span></label>
-      <input type="text" name="name" required
-             value="{{ server.name|default:'' }}"
-             placeholder="e.g. filesystem"
-             class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm focus:outline-none focus:border-blue-500/60">
-      <p class="text-xs text-gray-600 mt-1">Unique identifier used to namespace tool names (<code>name__tool</code>).</p>
+      {% if server %}
+        <input type="text" name="name"
+               value="{{ server.name }}"
+               readonly
+               class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-gray-400 text-sm cursor-not-allowed focus:outline-none">
+        <p class="text-xs text-gray-600 mt-1">Name cannot be changed after creation (used to namespace tool names as <code>name__tool</code>).</p>
+      {% else %}
+        <input type="text" name="name" required
+               value=""
+               placeholder="e.g. filesystem"
+               class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm focus:outline-none focus:border-blue-500/60">
+        <p class="text-xs text-gray-600 mt-1">Unique identifier used to namespace tool names (<code>name__tool</code>).</p>
+      {% endif %}
     </div>
 
     {# Transport #}
