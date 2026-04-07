@@ -29,6 +29,9 @@ dependencies = [
     "yfinance>=1.2.0",
 ]
 
+[project.scripts]
+mcp_server = "mcp_server:mcp.run"
+
 [dependency-groups]
 dev = [
     "factory-boy>=3.3.3",
