@@ -37,10 +37,11 @@ def _truncate_history(history: list[dict], budget_tokens: int, model: str) -> li
     return history
 
 
-def _build_skills_section(query: str) -> tuple[str, list[str]]:
+def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
     """Scan workspace/skills/, match against query using embeddings (with keyword fallback).
 
-    Returns (system_prompt_section, triggered_skill_names).
+    Returns (section_text, triggered_skill_names, skill_entries).
+    skill_entries: list of {name, status, match} for context_trace.
     """
     import re
     import yaml
@@ -48,16 +49,18 @@ def _build_skills_section(query: str) -> tuple[str, list[str]]:
 
     skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
     if not skills_dir.exists():
-        return "", []
+        return "", [], []
 
     query_lower = query.lower()
 
-    # Embedding-based routing (primary)
-    embedding_matches: set[str] = set(find_relevant_skills(query))
+    # Embedding-based routing (primary): returns list[tuple[str, float]]
+    _embedding_results = find_relevant_skills(query)
+    embedding_matches: dict[str, float] = {name: score for name, score in _embedding_results}
 
     index_rows: list[str] = []
     body_sections: list[str] = []
     triggered: list[str] = []
+    skill_entries: list[dict] = []
 
     # Load set of disabled skill names from DB
     from agent.models import Skill
@@ -89,22 +92,31 @@ def _build_skills_section(query: str) -> tuple[str, list[str]]:
         trigger_patterns: list[str] = meta.get("trigger_patterns", [])
 
         # Embedding match (primary)
+        match_reason: str | None = None
         if name in embedding_matches:
             matched = True
+            match_reason = "embedding"
         elif not embedding_matches and not triggers and not trigger_patterns:
             # No embeddings at all in DB yet and no keywords — fall back to always-inject for short skills
             matched = len(body.splitlines()) < 50
+            match_reason = None
         else:
             # Keyword/regex fallback — only fires if the embedding did NOT match
             # and the skill has explicit triggers or patterns configured
             matched = False
             if triggers:
-                matched = any(t.lower() in query_lower for t in triggers)
+                if any(t.lower() in query_lower for t in triggers):
+                    matched = True
+                    match_reason = "keyword"
             if not matched and trigger_patterns:
-                matched = any(re.search(p, query_lower) for p in trigger_patterns)
+                if any(re.search(p, query_lower) for p in trigger_patterns):
+                    matched = True
+                    match_reason = "regex"
 
-        status = "**Active**" if matched else "Available"
-        index_rows.append(f"| {name} | {description} | {status} |")
+        skill_status = "active" if matched else "available"
+        skill_entries.append({"name": name, "status": skill_status, "match": match_reason})
+        display_status = "**Active**" if matched else "Available"
+        index_rows.append(f"| {name} | {description} | {display_status} |")
 
         if matched:
             triggered.append(name)
@@ -114,7 +126,7 @@ def _build_skills_section(query: str) -> tuple[str, list[str]]:
             body_sections.append(f"{heading}\n\n{body}")
 
     if not index_rows:
-        return "", []
+        return "", [], []
 
     index = (
         "## Skills\n\n"
@@ -129,7 +141,7 @@ def _build_skills_section(query: str) -> tuple[str, list[str]]:
     else:
         section = index
 
-    return section, triggered
+    return section, triggered, skill_entries
 
 
 def _build_knowledge_section(query: str) -> tuple[str, list[dict]]:
@@ -166,10 +178,10 @@ def _build_knowledge_section(query: str) -> tuple[str, list[dict]]:
     return "\n\n".join(parts), matched_docs
 
 
-def _build_system_context(query: str) -> tuple[str, list[str], list[dict]]:
+def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]:
     """Assemble system prompt from workspace files, memories, and MCP resources.
 
-    Returns (system_prompt, triggered_skill_names, rag_matches).
+    Returns (system_prompt, triggered_skill_names, rag_matches, context_trace).
     """
     from datetime import datetime
     import zoneinfo
@@ -189,22 +201,26 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict]]:
     if soul_md:
         parts.append(soul_md)
 
-    skills_section, triggered = _build_skills_section(query)
+    skills_section, triggered, skill_entries = _build_skills_section(query)
     if skills_section:
         parts.append(skills_section)
 
+    memory_excerpts = 0
     try:
         from agent.memory.long_term import search_long_term
         excerpts = search_long_term(query, limit=5)
         if excerpts:
+            memory_excerpts = len(excerpts)
             parts.append("## Relevant memories\n\n" + "\n\n".join(excerpts))
     except Exception:
         pass
 
+    mcp_resources_chars = 0
     try:
         from agent.mcp.pool import MCPConnectionPool
         resources = MCPConnectionPool.get().fetch_always_include_resources()
         if resources:
+            mcp_resources_chars = sum(len(r) for r in resources)
             parts.append("## MCP Resources\n\n" + "\n\n".join(resources))
     except Exception:
         pass
@@ -237,9 +253,33 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict]]:
         "The executor runs them concurrently so there is zero benefit to "
         "sequential calls. Only call tools sequentially when a later call "
         "genuinely requires the output of an earlier one."
+        "\n\n---\n\n"
+        "## Reasoning transparency\n\n"
+        "When you decide to call one or more tools, write one sentence on its own line "
+        "starting with \"Reason:\" before the tool calls. State specifically what "
+        "information you are missing and what you expect the tools to return. "
+        "Example: \"Reason: I need the table name for wafer starts before I can write the SQL query.\"\n\n"
+        "After receiving tool results, begin your response with one of:\n"
+        "  \"Continue: <one sentence — what is still missing and why you need more tools>\"\n"
+        "  \"Answer: <one sentence — what the tools confirmed and what you will now say>\"\n"
+        "Do not omit this prefix. It helps the user understand your process."
     )
 
-    return content, triggered, rag_matches
+    context_trace: dict = {
+        "agents_md_chars": len(agents_md),
+        "soul_md_chars": len(soul_md),
+        "skills": skill_entries,
+        "memory_excerpts": memory_excerpts,
+        "mcp_resources_chars": mcp_resources_chars,
+        "rag": rag_matches,
+        "tools_count": 0,       # filled in by call_llm after tool schema construction
+        "mcp_servers": [],      # filled in by call_llm
+        "history_messages": 0,  # filled in by call_llm
+        "history_dropped": 0,   # filled in by call_llm
+        "total_prompt_chars": len(content),
+    }
+
+    return content, triggered, rag_matches, context_trace
 
 
 def _get_agent_model(agent_id: str) -> str:
@@ -305,7 +345,7 @@ def call_llm(state: AgentState) -> dict:
         pass
 
     model = _get_agent_model(state["agent_id"])
-    system_content, triggered_skills, rag_matches = _build_system_context(state.get("input", ""))
+    system_content, triggered_skills, rag_matches, context_trace = _build_system_context(state.get("input", ""))
 
     # Append conversation_id to system prompt so agent can reference it in workflows
     conversation_id = state.get("conversation_id")
@@ -351,7 +391,10 @@ def call_llm(state: AgentState) -> dict:
         history_window = getattr(settings, "AGENT_HISTORY_WINDOW", 10)
         if len(history) > history_window:
             history = history[-history_window:]
+        _history_before = len(history)
         history = _truncate_history(history, settings.AGENT_CONTEXT_BUDGET_TOKENS, model)
+        context_trace["history_messages"] = len(history)
+        context_trace["history_dropped"] = _history_before - len(history)
         messages.extend(history)
     else:
         messages.append({"role": "user", "content": state["input"]})
@@ -474,24 +517,28 @@ def call_llm(state: AgentState) -> dict:
         update_fields = {}
         if triggered_skills:
             update_fields["triggered_skills"] = triggered_skills
-        if rag_matches or tools_schema:
-            # Store RAG document matches and active MCP servers in graph_state for UI display
-            run_obj = AgentRun.objects.get(pk=state["run_id"])
-            gs = run_obj.graph_state or {}
-            if rag_matches:
-                gs["rag_matches"] = rag_matches
-            # Store names of connected MCP servers included in this call's tool list
-            try:
-                from agent.mcp.registry import get_registry as get_mcp_registry
-                mcp_server_names = sorted({
-                    entry.server_name
-                    for entry in get_mcp_registry().all().values()
-                }) if tools_schema else []
-            except Exception:
-                mcp_server_names = []
-            if mcp_server_names:
-                gs["mcp_servers_active"] = mcp_server_names
-            update_fields["graph_state"] = gs
+        # Store RAG document matches, active MCP servers, and context_trace in graph_state for UI display
+        run_obj = AgentRun.objects.get(pk=state["run_id"])
+        gs = run_obj.graph_state or {}
+        if rag_matches:
+            gs["rag_matches"] = rag_matches
+        # Store names of connected MCP servers included in this call's tool list
+        try:
+            from agent.mcp.registry import get_registry as get_mcp_registry
+            mcp_server_names = sorted({
+                entry.server_name
+                for entry in get_mcp_registry().all().values()
+            }) if tools_schema else []
+        except Exception:
+            mcp_server_names = []
+        if mcp_server_names:
+            gs["mcp_servers_active"] = mcp_server_names
+        # Persist context_trace on the first round only (it describes the initial context load)
+        if state.get("tool_call_rounds", 0) == 0:
+            context_trace["tools_count"] = len(tools_schema)
+            context_trace["mcp_servers"] = mcp_server_names
+            gs["context_trace"] = context_trace
+        update_fields["graph_state"] = gs
         if update_fields:
             AgentRun.objects.filter(pk=state["run_id"]).update(**update_fields)
     except Exception:
@@ -516,6 +563,20 @@ def call_llm(state: AgentState) -> dict:
     current_round = state.get("tool_call_rounds", 0) + 1
     loop_trace = list(state.get("loop_trace") or [])
 
+    # When tool_results were present in state (subsequent round), the LLM should
+    # have started its response with "Continue: ..." or "Answer: ...".
+    # Extract and write back to the previous round's trace entry as continue_reason.
+    _content_raw = (message.content or "").strip()
+    if state.get("tool_results") and loop_trace:
+        if _content_raw.startswith("Continue: ") or _content_raw.startswith("Answer: "):
+            _continue_reason = _content_raw.split("\n", 1)[0]
+        elif _content_raw:
+            _continue_reason = _content_raw[:100]
+        else:
+            _continue_reason = None
+        if _continue_reason:
+            loop_trace[-1] = {**loop_trace[-1], "continue_reason": _continue_reason}
+
     if message.tool_calls:
         tool_calls = [
             {
@@ -526,13 +587,29 @@ def call_llm(state: AgentState) -> dict:
             for tc in message.tool_calls
         ]
 
+        # Strip "Reason:" prefix from reasoning content (the Continue:/Answer: prefix
+        # was already consumed above for the previous round's continue_reason).
+        _reasoning = _content_raw
+        if _reasoning.lower().startswith("reason:"):
+            _reasoning = _reasoning[len("reason:"):].strip()
+        elif _reasoning.lower().startswith("continue: ") or _reasoning.lower().startswith("answer: "):
+            # Already captured as continue_reason; strip it from reasoning
+            _after_prefix = _reasoning.split("\n", 1)
+            _reasoning = _after_prefix[1].strip() if len(_after_prefix) > 1 else ""
+            if _reasoning.lower().startswith("reason:"):
+                _reasoning = _reasoning[len("reason:"):].strip()
+
         trace_entry = {
             "round": current_round,
             "decision": "tool_call",
             "tools": [tc.function.name for tc in message.tool_calls],
-            "reasoning": (message.content or "").strip() or None,
+            "reasoning": _reasoning or None,
             # Count of parallel calls in this round — >1 means they run concurrently
             "parallel_count": len(message.tool_calls),
+            # tool_wall_ms and tool_count are filled in by execute_tools after the batch completes
+            "tool_wall_ms": None,
+            "tool_count": 0,
+            "forced": False,
         }
         loop_trace.append(trace_entry)
 
@@ -572,11 +649,25 @@ def call_llm(state: AgentState) -> dict:
         }
 
     # Final answer — no tool calls
+    # Capture the Answer:/Continue: prefix as reasoning for this round.
+    # If this follows tool results, the continue_reason was already written to
+    # the previous round above; here we store just the prefix line itself.
+    _final_reasoning: str | None = None
+    if _content_raw.lower().startswith("answer: ") or _content_raw.lower().startswith("continue: "):
+        _final_reasoning = _content_raw.split("\n", 1)[0]
+    elif _content_raw:
+        # No structured prefix — store the first sentence (up to 120 chars)
+        _first_sentence = _content_raw.split(".")[0].strip()
+        _final_reasoning = (_first_sentence[:120] + "…") if len(_first_sentence) > 120 else (_first_sentence or None)
+
     trace_entry = {
         "round": current_round,
         "decision": "answer",
         "tools": [],
-        "reasoning": None,
+        "reasoning": _final_reasoning,
+        "tool_wall_ms": None,
+        "tool_count": 0,
+        "forced": False,
     }
     loop_trace.append(trace_entry)
 
@@ -601,6 +692,7 @@ def check_approval(state: AgentState) -> dict:
 
     pending = state.get("pending_tool_calls", [])
     run = AgentRun.objects.get(pk=state["run_id"])
+    current_round = state.get("tool_call_rounds", 0) + 1
 
     failed_sigs = list(state.get("failed_tool_signatures") or [])
     succeeded_sigs = list(state.get("succeeded_tool_signatures") or [])
@@ -648,14 +740,16 @@ def check_approval(state: AgentState) -> dict:
     for tc in pending:
         tool_name = tc["name"]
         tool = get_tool(tool_name)
+        approval_reason = ""
         if workflow_run:
-            requires = False  # all tools auto-approved in workflow context
+            requires = False
+            approval_reason = "auto_workflow"
         elif tool is not None:
-            # Allow per-call approval logic (e.g. file_write only requires approval for workflows/)
             if hasattr(tool, "requires_approval_for"):
                 requires = tool.requires_approval_for(tc.get("arguments", {}))
             else:
                 requires = tool.approval_policy == ApprovalPolicy.REQUIRES_APPROVAL
+            approval_reason = "requires_human" if requires else "policy_allow"
         else:
             # Check MCP registry
             try:
@@ -664,16 +758,18 @@ def check_approval(state: AgentState) -> dict:
                 mcp_entry = get_mcp_registry().get(tool_name)
                 if mcp_entry:
                     server = MCPServer.objects.filter(name=mcp_entry.server_name).first()
-                    requires = server is None or mcp_entry.tool_name not in (server.auto_approve_tools or [])
+                    in_auto_list = server is not None and mcp_entry.tool_name in (server.auto_approve_tools or [])
+                    requires = not in_auto_list
+                    approval_reason = "auto_approve_list" if in_auto_list else "requires_human"
                 elif "__" in tool_name:
-                    # Looks like an MCP tool (Server__tool format) but registry is
-                    # temporarily empty. Auto-execute — execute_tools will handle
-                    # the "Unknown tool" error gracefully rather than blocking on approval.
                     requires = False
+                    approval_reason = "policy_allow"
                 else:
-                    requires = True  # truly unknown tool → require approval
+                    requires = True
+                    approval_reason = "requires_human"
             except Exception:
                 requires = False if "__" in tool_name else True
+                approval_reason = "policy_allow" if not requires else "requires_human"
         if requires:
             te = ToolExecution.objects.create(
                 run=run,
@@ -681,6 +777,8 @@ def check_approval(state: AgentState) -> dict:
                 input=tc.get("arguments", {}),
                 status=ToolExecution.Status.PENDING,
                 requires_approval=True,
+                approval_reason=approval_reason,
+                round=current_round,
             )
             needs_approval.append({**tc, "tool_execution_id": str(te.id)})
         else:
@@ -691,6 +789,8 @@ def check_approval(state: AgentState) -> dict:
                 input=tc.get("arguments", {}),
                 status=ToolExecution.Status.RUNNING,
                 requires_approval=False,
+                approval_reason=approval_reason,
+                round=current_round,
             )
             auto_execute.append({**tc, "tool_execution_id": str(te.id)})
 
@@ -888,7 +988,8 @@ def execute_tools(state: AgentState) -> dict:
                     te.output = result
                     te.save(update_fields=["status", "output"])
 
-        return {"tc": tc, "result": result, "sig": sig}
+        duration_ms = te.duration_ms if te else None
+        return {"tc": tc, "result": result, "sig": sig, "duration_ms": duration_ms}
 
     # ── Stamp parallel / serial group IDs on ToolExecutions ─────────────────────
     # All TEs dispatched in the same concurrent batch share a parallel_group ID
@@ -1044,6 +1145,24 @@ def execute_tools(state: AgentState) -> dict:
     all_failed = all(r["result"].get("error") for r in tool_results) if tool_results else False
     consecutive_failed = state.get("consecutive_failed_rounds", 0)
     consecutive_failed = consecutive_failed + 1 if all_failed else 0
+
+    # ── Write tool_wall_ms and tool_count back to the current round's loop_trace entry ──
+    _dispatched_count = len(parallel_tcs) + len(serial_tcs)
+    _parallel_durations = [o.get("duration_ms") for o in parallel_outcomes if o.get("duration_ms")]
+    _tool_wall_ms: int | None = max(_parallel_durations) if _parallel_durations else None
+    try:
+        from agent.models import AgentRun as _AR2
+        _ar2 = _AR2.objects.get(pk=state["run_id"])
+        _gs2 = _ar2.graph_state or {}
+        _trace2 = _gs2.get("loop_trace", [])
+        if _trace2:
+            _trace2[-1]["tool_wall_ms"] = _tool_wall_ms
+            _trace2[-1]["tool_count"] = _dispatched_count
+            _gs2["loop_trace"] = _trace2
+            _AR2.objects.filter(pk=state["run_id"]).update(graph_state=_gs2)
+    except Exception:
+        pass
+
     return {
         "tool_results": tool_results,
         "pending_tool_calls": [],
@@ -1065,7 +1184,7 @@ def force_conclude(state: AgentState) -> dict:
     from agent.models import AgentRun
 
     model = _get_agent_model(state["agent_id"])
-    system_content, _, _ = _build_system_context(state.get("input", ""))
+    system_content, _, _, _ = _build_system_context(state.get("input", ""))
 
     # Collect any markdown-bearing results (e.g. chart images) so they are
     # always preserved verbatim regardless of what the LLM does with them.
@@ -1133,6 +1252,31 @@ def force_conclude(state: AgentState) -> dict:
         output = response.choices[0].message.content or ""
     except Exception as exc:
         output = f"Reached tool-use limit. Error generating summary: {exc}"
+
+    # Mark the current round's loop_trace entry (or append one) as forced=True
+    try:
+        from agent.models import AgentRun as _AR3
+        _ar3 = _AR3.objects.get(pk=state["run_id"])
+        _gs3 = _ar3.graph_state or {}
+        _trace3 = list(_gs3.get("loop_trace") or [])
+        _current_round = state.get("tool_call_rounds", 0) + 1
+        if _trace3 and _trace3[-1].get("round") == _current_round:
+            _trace3[-1]["forced"] = True
+        else:
+            _fc_reasoning = output.split(".")[0].strip()[:120] if output else None
+            _trace3.append({
+                "round": _current_round,
+                "decision": "answer",
+                "tools": [],
+                "reasoning": _fc_reasoning or None,
+                "tool_wall_ms": None,
+                "tool_count": 0,
+                "forced": True,
+            })
+        _gs3["loop_trace"] = _trace3
+        _AR3.objects.filter(pk=state["run_id"]).update(graph_state=_gs3)
+    except Exception:
+        pass
 
     return {"output": output, "pending_tool_calls": []}
 
