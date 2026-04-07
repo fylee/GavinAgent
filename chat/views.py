@@ -230,10 +230,10 @@ class MessageStreamView(View):
             from agent.views import _annotate_tool_executions
             tool_executions = _annotate_tool_executions(tool_executions)
             triggered_skills = active_agent_run.triggered_skills or []
-            loop_trace = (active_agent_run.graph_state or {}).get("loop_trace", [])
+            graph_state = active_agent_run.graph_state or {}
+            loop_trace = graph_state.get("loop_trace", [])
             # MCP servers: prefer graph_state (set early by call_llm), supplement
             # with any from actual tool executions (tool_name like "Server__tool")
-            graph_state = active_agent_run.graph_state or {}
             mcp_from_state = graph_state.get("mcp_servers_active", [])
             # Resolve MCP server names from tool executions using the registry
             # so we get the original server_name (e.g. "EDWM MCP") not the
@@ -260,16 +260,38 @@ class MessageStreamView(View):
                 else:
                     te.display_name = te.tool_name
                     te.is_mcp = False
+            # Group TEs by round so they render interleaved with loop_trace reasoning.
+            # TEs with round=None (no round field yet) are distributed in created_at order
+            # across rounds using a positional fallback.
+            te_by_round: dict = {}
+            unrooted: list = []
+            for te in tool_executions:
+                if te.round:
+                    te_by_round.setdefault(te.round, []).append(te)
+                else:
+                    unrooted.append(te)
+            # Distribute unrooted TEs evenly across rounds (oldest first)
+            if unrooted and loop_trace:
+                for i, te in enumerate(unrooted):
+                    r = loop_trace[i % len(loop_trace)].get("round", i + 1)
+                    te_by_round.setdefault(r, []).append(te)
+            loop_trace_with_tes = [
+                {**entry, "tool_executions": te_by_round.get(entry.get("round", 0), [])}
+                for entry in loop_trace
+            ]
+            # If there are TEs but no loop_trace yet (first round in flight),
+            # pass them raw so at least something is visible.
+            bare_tes = tool_executions if (not loop_trace and tool_executions) else []
             if tool_executions or triggered_skills or mcp_servers_active:
                 html = render_to_string(
                     "chat/_tool_progress.html",
                     {
                         "conversation": conversation,
                         "user_msg_id": user_msg.id,
-                        "tool_executions": tool_executions,
+                        "tool_executions": bare_tes,
                         "triggered_skills": triggered_skills,
                         "mcp_servers_active": mcp_servers_active,
-                        "loop_trace": loop_trace,
+                        "loop_trace": loop_trace_with_tes,
                     },
                     request=request,
                 )
