@@ -57,13 +57,18 @@
     <div class="flex-shrink-0 px-4 py-4 border-t border-white/10"
          x-data="chatInput('{% url 'chat:cancel-run' pk=conversation.id %}')"
          @runCancelled.window="onCancelled()"
-         @htmx:afterSwap.window="onAfterSwap($event)">
+         x-init="
+           document.body.addEventListener('htmx:afterSwap', (e) => onAfterSwap(e));
+           document.body.addEventListener('runCancelled', () => onCancelled());
+         ">
       <form id="message-form"
             hx-post="{% url 'chat:message-create' conversation_pk=conversation.id %}"
             hx-target="#message-list"
             hx-swap="beforeend"
-            @htmx:beforeRequest="onSend()"
-            @htmx:afterRequest="onSendDone($event)"
+            x-init="
+              $el.addEventListener('htmx:beforeRequest', () => onSend());
+              $el.addEventListener('htmx:afterRequest', (e) => onSendDone(e));
+            "
             class="max-w-3xl mx-auto flex items-end gap-2">
         {% csrf_token %}
         <textarea name="content"
@@ -205,21 +210,17 @@ function chatInput(cancelUrl) {
 
     onSend() {
       this.running = true;
-      this.$nextTick(() => {
-        document.getElementById('message-input').disabled = true;
-      });
+      const ta = document.getElementById('message-input');
+      ta.value = '';
+      ta.style.height = 'auto';
     },
 
     onSendDone(e) {
       if (e.detail.successful) {
-        const ta = document.getElementById('message-input');
-        ta.value = '';
-        ta.style.height = 'auto';
-        document.getElementById('message-list').scrollTop =
-          document.getElementById('message-list').scrollHeight;
-        ta.focus();
         // Stay in running state — polling (_typing_indicator / _tool_progress)
         // will swap in the final message; onAfterSwap detects completion.
+        document.getElementById('message-list').scrollTop =
+          document.getElementById('message-list').scrollHeight;
       } else {
         // Network error on submit itself — revert immediately.
         this._revert();
