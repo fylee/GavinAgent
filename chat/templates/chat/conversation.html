@@ -54,11 +54,16 @@
     </div>
 
     {# Input bar #}
-    <div class="flex-shrink-0 px-4 py-4 border-t border-white/10">
+    <div class="flex-shrink-0 px-4 py-4 border-t border-white/10"
+         x-data="chatInput('{% url 'chat:cancel-run' pk=conversation.id %}')"
+         @runCancelled.window="onCancelled()"
+         @htmx:afterSwap.window="onAfterSwap($event)">
       <form id="message-form"
             hx-post="{% url 'chat:message-create' conversation_pk=conversation.id %}"
             hx-target="#message-list"
             hx-swap="beforeend"
+            @htmx:beforeRequest="onSend()"
+            @htmx:afterRequest="onSendDone($event)"
             class="max-w-3xl mx-auto flex items-end gap-2">
         {% csrf_token %}
         <textarea name="content"
@@ -66,15 +71,33 @@
                   rows="1"
                   placeholder="Message…"
                   required
+                  :disabled="running"
                   class="flex-1 resize-none rounded-2xl px-4 py-3 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-white/20 text-white placeholder-gray-500 border border-white/10"
                   style="background-color: #40414f; max-height: 160px; overflow-y: auto;"
         ></textarea>
+
+        {# Send button — shown when idle #}
         <button type="submit"
                 id="send-btn"
-                class="flex-shrink-0 text-white rounded-xl p-3 transition-colors disabled:opacity-40 border border-white/20 hover:bg-white/10"
+                x-show="!running"
+                class="flex-shrink-0 text-white rounded-xl p-3 transition-colors border border-white/20 hover:bg-white/10"
                 style="background-color: #40414f;">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </button>
+
+        {# Stop button — shown while running #}
+        <button type="button"
+                id="stop-btn"
+                x-show="running"
+                x-cloak
+                @click="stop()"
+                title="Stop"
+                class="flex-shrink-0 text-white rounded-xl p-3 transition-colors border border-red-500/60 hover:bg-red-500/20"
+                style="background-color: #40414f;">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-red-400" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
           </svg>
         </button>
       </form>
@@ -175,11 +198,77 @@
 </div>
 
 <script>
+// Alpine component for the input bar
+function chatInput(cancelUrl) {
+  return {
+    running: false,
+
+    onSend() {
+      this.running = true;
+      this.$nextTick(() => {
+        document.getElementById('message-input').disabled = true;
+      });
+    },
+
+    onSendDone(e) {
+      if (e.detail.successful) {
+        const ta = document.getElementById('message-input');
+        ta.value = '';
+        ta.style.height = 'auto';
+        document.getElementById('message-list').scrollTop =
+          document.getElementById('message-list').scrollHeight;
+        ta.focus();
+        // Stay in running state — polling (_typing_indicator / _tool_progress)
+        // will swap in the final message; onAfterSwap detects completion.
+      } else {
+        // Network error on submit itself — revert immediately.
+        this._revert();
+      }
+    },
+
+    // Called when HTMX swaps new content into #message-list (polling or final reply).
+    // When the typing indicator is replaced by a real message (no more #typing-indicator),
+    // the run is done.
+    onAfterSwap(e) {
+      if (!this.running) return;
+      // If typing-indicator is no longer in the DOM, the run finished normally.
+      if (!document.getElementById('typing-indicator')) {
+        this._revert();
+      }
+    },
+
+    // HX-Trigger: runCancelled fires here after the cancel POST.
+    onCancelled() {
+      this._revert();
+    },
+
+    stop() {
+      fetch(cancelUrl, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+          'HX-Request': 'true',
+        },
+      }).then(() => {
+        // Remove the typing indicator immediately so the UI looks stopped.
+        const ind = document.getElementById('typing-indicator');
+        if (ind) ind.remove();
+        this._revert();
+      });
+    },
+
+    _revert() {
+      this.running = false;
+      const ta = document.getElementById('message-input');
+      ta.disabled = false;
+      ta.focus();
+    },
+  };
+}
+
 (function () {
   const msgList = document.getElementById('message-list');
-  const form = document.getElementById('message-form');
   const textarea = document.getElementById('message-input');
-  const sendBtn = document.getElementById('send-btn');
 
   function scrollBottom() { msgList.scrollTop = msgList.scrollHeight; }
   scrollBottom();
@@ -192,24 +281,8 @@
   textarea.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      form.requestSubmit();
+      document.getElementById('message-form').requestSubmit();
     }
-  });
-
-  form.addEventListener('htmx:beforeRequest', function () {
-    textarea.disabled = true;
-    sendBtn.disabled = true;
-  });
-
-  form.addEventListener('htmx:afterRequest', function (e) {
-    textarea.disabled = false;
-    sendBtn.disabled = false;
-    if (e.detail.successful) {
-      textarea.value = '';
-      textarea.style.height = 'auto';
-      scrollBottom();
-    }
-    textarea.focus();
   });
 
   msgList.addEventListener('htmx:afterSwap', scrollBottom);

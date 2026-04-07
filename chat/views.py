@@ -424,3 +424,23 @@ class ConversationAgentToggleView(View):
             return HttpResponse(html)
 
         return redirect("chat:detail", pk=conversation.id)
+
+
+class CancelRunView(View):
+    """Cancel any in-flight AgentRuns for a conversation."""
+
+    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
+        from agent.models import AgentRun
+
+        conversation = get_object_or_404(Conversation, pk=pk)
+        AgentRun.objects.filter(
+            conversation=conversation,
+            status__in=[
+                AgentRun.Status.PENDING,
+                AgentRun.Status.RUNNING,
+                AgentRun.Status.WAITING,
+            ],
+        ).update(status=AgentRun.Status.FAILED, error="Cancelled by user")
+        return HttpResponse(
+            "", status=200, headers={"HX-Trigger": "runCancelled"}
+        )

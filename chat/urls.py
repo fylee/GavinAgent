@@ -8,6 +8,7 @@ urlpatterns = [
     path("conversations/<uuid:pk>/", views.ConversationDetailView.as_view(), name="detail"),
     path("conversations/<uuid:pk>/update/", views.ConversationUpdateView.as_view(), name="update"),
     path("conversations/<uuid:pk>/agent/", views.ConversationAgentToggleView.as_view(), name="agent-toggle"),
+    path("conversations/<uuid:pk>/cancel/", views.CancelRunView.as_view(), name="cancel-run"),
     path(
         "conversations/<uuid:conversation_pk>/messages/",
         views.MessageCreateView.as_view(),
