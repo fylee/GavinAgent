@@ -10,6 +10,148 @@ retrospectively (in the run detail view) to support debugging and improvement.
 
 ---
 
+## Agent Loop Architecture
+
+Understanding the loop is prerequisite to knowing where to instrument it.
+
+### Graph nodes and edges (`agent/graph/graph.py`)
+
+The agent is implemented as a LangGraph `StateGraph`. All state is typed in
+`AgentState` (`agent/graph/state.py`) and persisted to `AgentRun.graph_state`
+via `DjangoCheckpointer`.
+
+```
+                        ┌─────────────────┐
+                        │ assemble_context │  (no-op pass-through — context
+                        └────────┬────────┘   assembly happens inside call_llm)
+                                 │
+                        ┌────────▼────────┐
+                    ┌──►│    call_llm     │◄──────────────────────────────┐
+                    │   └────────┬────────┘                               │
+                    │            │                                         │
+                    │    pending_tool_calls?                               │
+                    │       ├── yes ──►┌─────────────────┐               │
+                    │       │          │  check_approval  │               │
+                    │       │          └────────┬─────────┘               │
+                    │       │                   │                          │
+                    │       │     waiting_for_approval?                    │
+                    │       │          ├── yes ──► END  (paused)          │
+                    │       │          │                                   │
+                    │       │     pending_tool_calls empty after filter?   │
+                    │       │          ├── yes ──►┌──────────────────┐    │
+                    │       │          │           │  force_conclude  │    │
+                    │       │          │           └────────┬─────────┘    │
+                    │       │          │                    │               │
+                    │       │          └── no ──►┌──────────────────┐      │
+                    │       │                    │  execute_tools   │      │
+                    │       │                    └────────┬─────────┘      │
+                    │       │                             │                 │
+                    │       │              tool_call_rounds ≥ max?         │
+                    │       │              consecutive_failed ≥ max?       │
+                    │       │                   ├── yes ──► force_conclude │
+                    │       │                   └── no  ──────────────────┘
+                    │       │
+                    │       └── no ──►┌─────────────┐
+                    │                 │ save_result  │──► END
+                    └─────────────────┘
+                      (force_conclude also
+                       edges to save_result)
+```
+
+### Node responsibilities
+
+| Node | Responsibility |
+|------|---------------|
+| `assemble_context` | No-op. Exists as the named entry point; actual context assembly is done inside `call_llm` to keep all LLM-related logic co-located. |
+| `call_llm` | Cancellation check → `_build_system_context` → history assembly + truncation → tool schema construction → LLM API call → parse response → write `loop_trace` entry → persist to `graph_state`. |
+| `check_approval` | Dedup pre-filter (drop already-succeeded/failed sigs) → per-tool approval policy evaluation (workflow auto-approve / `auto_approve_tools` list / `ApprovalPolicy`) → split into `auto_execute` and `needs_approval` lists → set `waiting_for_approval` and pause if any need human input. |
+| `execute_tools` | Cancellation check → URL/sig/blocked-server pre-filters → split into `parallel_tcs` and `serial_tcs` (`_SERIAL_TOOLS = {"file_write", "shell_exec"}`) → stamp `ToolExecution.parallel_group` → `ThreadPoolExecutor` for parallel batch → sequential loop for serial batch → post-process: `failed_sigs`, `succeeded_sigs`, `blocked_mcp_servers`, `collected_markdown`, `search_result_urls`, `consecutive_failed_rounds`. |
+| `force_conclude` | Fired when: (a) `tool_call_rounds ≥ AGENT_MAX_TOOL_CALL_ROUNDS` (default 20), (b) `consecutive_failed_rounds ≥ AGENT_MAX_CONSECUTIVE_FAILED_ROUNDS` (default 2), or (c) all pending tool calls were pre-filtered duplicates. Calls the LLM with no tools and the instruction "compose your final answer now." |
+| `save_result` | Writes `ChatMessage` (role=assistant), marks `AgentRun.status = COMPLETED`, sets `finished_at`. For workflow runs on the last step, calls `_deliver` to send output via the workflow's delivery config. Respects existing `FAILED` status (cancel wins). |
+
+### State fields (`AgentState`)
+
+```
+run_id                      AgentRun PK
+agent_id                    Agent PK
+conversation_id             chat.Conversation PK (None for CLI/heartbeat)
+input                       User query string
+messages                    Accumulated message list (Annotated[list, operator.add])
+pending_tool_calls          Tool calls from current LLM response
+tool_results                Results for the current round only (replaced each round)
+assistant_tool_call_message The assistant message that issued the last tool_calls
+                            (must precede tool results in next API call)
+output                      Final answer string
+waiting_for_approval        True when paused for human tool approval
+tool_call_rounds            Incremented by execute_tools; triggers force_conclude at max
+visited_urls                URLs already fetched (prevents duplicate web_read)
+failed_tool_signatures      "tool_name|arg_hash" strings that errored this run
+succeeded_tool_signatures   "tool_name|arg_hash" strings that succeeded this run
+collected_markdown          Markdown snippets (chart images etc.) persisted across rounds
+search_result_urls          URLs from web_search results (for auto web_read fallback)
+loop_trace                  Per-round decision log [{round, decision, tools, reasoning, …}]
+blocked_mcp_servers         MCP servers whose tools could not be resolved this run
+consecutive_failed_rounds   Consecutive rounds where every tool call failed
+error                       Error string if run failed
+```
+
+### `_build_system_context` assembly order
+
+Called on **every** `call_llm` invocation (including `force_conclude`).
+Sections are joined with `\n\n---\n\n`:
+
+1. Temporal context (current datetime + timezone)
+2. `AGENTS.md` (workspace agent instructions, if present)
+3. `SOUL.md` (agent personality, if present)
+4. Skills section — index table of all skills + full body of triggered ones
+5. Long-term memory excerpts (top 5 by embedding similarity)
+6. MCP always-include resources (fetched live from connected servers)
+7. RAG knowledge chunks (retrieved by `retrieve_knowledge(query)`)
+8. Tool output formatting rule (static)
+9. Parallel tool call instruction (static)
+
+Then `call_llm` appends:
+- `conversation_id` footer (if present)
+- Chat history (last `AGENT_HISTORY_WINDOW` messages, truncated to `AGENT_CONTEXT_BUDGET_TOKENS`)
+- Previous round's `assistant_tool_call_message` + tool results (if any)
+- Markdown verbatim instruction (if `collected_markdown` is non-empty)
+
+### Tool execution pipeline inside `execute_tools`
+
+```
+pending_tool_calls (from state)
+        │
+        ▼
+Pre-filter (sequential):
+  • Skip duplicate URLs (visited_urls)          → short-circuit result
+  • Skip failed signatures (failed_sigs)        → error result
+  • Skip succeeded signatures (succeeded_sigs)  → error result
+  • Skip blocked MCP servers                    → error result + add to failed_sigs
+        │
+        ├──► parallel_tcs  (all others)
+        └──► serial_tcs    (file_write, shell_exec)
+        │
+        ▼
+Stamp ToolExecution.parallel_group (UUID hex) before dispatch
+        │
+        ├──► ThreadPoolExecutor → _run_one(tc) per parallel_tc
+        │         │
+        │         └── built-in tool?  → tool.execute(**args)
+        │             MCP tool?       → MCPConnectionPool.get().call_tool(...)
+        │
+        └──► Sequential loop → _run_one(tc) per serial_tc
+        │
+        ▼
+Post-process outcomes:
+  • Append to failed_sigs / succeeded_sigs
+  • Block MCP server if registry miss
+  • Accumulate collected_markdown
+  • Accumulate search_result_urls
+  • Count consecutive_failed_rounds
+```
+
+---
+
 ## Background
 
 ### What is already captured
