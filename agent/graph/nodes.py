@@ -230,10 +230,13 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict]]:
         "exactly as-is so that images and links render correctly."
         "\n\n---\n\n"
         "## Parallel tool calls\n\n"
-        "When you need results from multiple independent sources, call all relevant "
-        "tools in a single response at the same time — do not wait for one result "
-        "before requesting the next. Only call tools sequentially when a later call "
-        "genuinely depends on the output of an earlier one."
+        "Always call independent tools simultaneously in a single response — "
+        "never one at a time. For example, if you need to run three SQL queries "
+        "that do not depend on each other, emit all three tool calls at once "
+        "rather than waiting for each result before issuing the next. "
+        "The executor runs them concurrently so there is zero benefit to "
+        "sequential calls. Only call tools sequentially when a later call "
+        "genuinely requires the output of an earlier one."
     )
 
     return content, triggered, rag_matches
