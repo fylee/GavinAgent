@@ -20,42 +20,84 @@ The agent is implemented as a LangGraph `StateGraph`. All state is typed in
 `AgentState` (`agent/graph/state.py`) and persisted to `AgentRun.graph_state`
 via `DjangoCheckpointer`.
 
+#### Node & edge topology
+
+```mermaid
+flowchart TD
+    START([START]) --> AC
+
+    AC["assemble_context\n─────────────────\nno-op entry point"]
+    AC --> LLM
+
+    LLM["call_llm\n─────────────────\ncancellation check\n_build_system_context\nhistory assembly + truncation\ntool schema construction\nLLM API call\nparse response\nwrite loop_trace entry\npersist graph_state"]
+
+    LLM -- "pending_tool_calls?" --> R1{has tool calls?}
+    R1 -- "no → final answer" --> SR
+
+    R1 -- yes --> CA
+
+    CA["check_approval\n─────────────────\ndedup pre-filter\napproval policy eval\nsplit: auto_execute / needs_approval\nset waiting_for_approval"]
+
+    CA --> R2{waiting_for_approval?}
+    R2 -- yes --> END_PAUSE([END — paused])
+
+    R2 -- no --> R3{pending_tool_calls\nempty after filter?}
+    R3 -- yes --> FC
+
+    R3 -- no --> ET
+
+    ET["execute_tools\n─────────────────\ncancellation check\nURL / sig / server pre-filters\nsplit parallel_tcs / serial_tcs\nstamp ToolExecution.parallel_group\nThreadPoolExecutor → parallel batch\nsequential loop → serial batch\npost-process outcomes"]
+
+    ET --> R4{tool_call_rounds ≥ max\nOR consecutive_failed ≥ max?}
+    R4 -- yes --> FC
+    R4 -- no --> LLM
+
+    FC["force_conclude\n─────────────────\n_build_system_context\nLLM call (no tools)\n'compose your final answer now'"]
+    FC --> SR
+
+    SR["save_result\n─────────────────\nwrite ChatMessage\nAgentRun.status = COMPLETED\nfinished_at\nworkflow delivery if applicable"]
+    SR --> END_DONE([END — completed])
+
+    style AC    fill:#e8f4f8,stroke:#5b9bd5
+    style LLM   fill:#dff0d8,stroke:#3c763d,color:#1a3a1a
+    style CA    fill:#fdf5e6,stroke:#e6a817
+    style ET    fill:#f0e8f8,stroke:#7b52ab,color:#2d1a4a
+    style FC    fill:#fde8e8,stroke:#d9534f
+    style SR    fill:#e8f8e8,stroke:#5cb85c
 ```
-                        ┌─────────────────┐
-                        │ assemble_context │  (no-op pass-through — context
-                        └────────┬────────┘   assembly happens inside call_llm)
-                                 │
-                        ┌────────▼────────┐
-                    ┌──►│    call_llm     │◄──────────────────────────────┐
-                    │   └────────┬────────┘                               │
-                    │            │                                         │
-                    │    pending_tool_calls?                               │
-                    │       ├── yes ──►┌─────────────────┐               │
-                    │       │          │  check_approval  │               │
-                    │       │          └────────┬─────────┘               │
-                    │       │                   │                          │
-                    │       │     waiting_for_approval?                    │
-                    │       │          ├── yes ──► END  (paused)          │
-                    │       │          │                                   │
-                    │       │     pending_tool_calls empty after filter?   │
-                    │       │          ├── yes ──►┌──────────────────┐    │
-                    │       │          │           │  force_conclude  │    │
-                    │       │          │           └────────┬─────────┘    │
-                    │       │          │                    │               │
-                    │       │          └── no ──►┌──────────────────┐      │
-                    │       │                    │  execute_tools   │      │
-                    │       │                    └────────┬─────────┘      │
-                    │       │                             │                 │
-                    │       │              tool_call_rounds ≥ max?         │
-                    │       │              consecutive_failed ≥ max?       │
-                    │       │                   ├── yes ──► force_conclude │
-                    │       │                   └── no  ──────────────────┘
-                    │       │
-                    │       └── no ──►┌─────────────┐
-                    │                 │ save_result  │──► END
-                    └─────────────────┘
-                      (force_conclude also
-                       edges to save_result)
+
+#### Sequence: typical multi-round interaction
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant AC as assemble_context
+    participant LLM as call_llm
+    participant CA as check_approval
+    participant ET as execute_tools
+    participant FC as force_conclude
+    participant SR as save_result
+
+    U->>AC: AgentState{input, run_id, …}
+    AC->>LLM: state (pass-through)
+
+    Note over LLM: _build_system_context<br/>+ history assembly<br/>→ LLM API call
+    LLM-->>CA: pending_tool_calls=[A, B, C]
+
+    Note over CA: dedup filter<br/>approval policy eval
+    CA-->>ET: auto_execute=[A, B, C]
+
+    Note over ET: parallel_tcs=[A,B] serial_tcs=[C]<br/>ThreadPoolExecutor → A, B concurrently<br/>sequential → C
+    ET-->>LLM: tool_results, tool_call_rounds=1
+
+    Note over LLM: sees results<br/>→ LLM API call
+    LLM-->>CA: pending_tool_calls=[D]
+    CA-->>ET: auto_execute=[D]
+    ET-->>LLM: tool_results, tool_call_rounds=2
+
+    Note over LLM: sees results<br/>→ final answer (no tools)
+    LLM-->>SR: output="…"
+    SR-->>U: ChatMessage saved, status=COMPLETED
 ```
 
 ### Node responsibilities
@@ -71,28 +113,92 @@ via `DjangoCheckpointer`.
 
 ### State fields (`AgentState`)
 
+```mermaid
+classDiagram
+    class AgentState {
+        <<TypedDict>>
+
+        %% Identity
+        +str run_id
+        +int agent_id
+        +int|None conversation_id
+
+        %% Input
+        +str input
+
+        %% Message history  [Annotated list — operator.add]
+        +list messages
+
+        %% Current round — LLM output
+        +list pending_tool_calls
+        +dict|None assistant_tool_call_message
+
+        %% Current round — tool output
+        +list tool_results
+
+        %% Final answer
+        +str|None output
+
+        %% Approval gate
+        +bool waiting_for_approval
+
+        %% Loop counters / guards
+        +int tool_call_rounds
+        +int consecutive_failed_rounds
+
+        %% Dedup / pre-filter sets
+        +set visited_urls
+        +set failed_tool_signatures
+        +set succeeded_tool_signatures
+        +set blocked_mcp_servers
+
+        %% Accumulated across rounds
+        +list collected_markdown
+        +list search_result_urls
+        +list loop_trace
+
+        %% Error
+        +str|None error
+    }
 ```
-run_id                      AgentRun PK
-agent_id                    Agent PK
-conversation_id             chat.Conversation PK (None for CLI/heartbeat)
-input                       User query string
-messages                    Accumulated message list (Annotated[list, operator.add])
-pending_tool_calls          Tool calls from current LLM response
-tool_results                Results for the current round only (replaced each round)
-assistant_tool_call_message The assistant message that issued the last tool_calls
-                            (must precede tool results in next API call)
-output                      Final answer string
-waiting_for_approval        True when paused for human tool approval
-tool_call_rounds            Incremented by execute_tools; triggers force_conclude at max
-visited_urls                URLs already fetched (prevents duplicate web_read)
-failed_tool_signatures      "tool_name|arg_hash" strings that errored this run
-succeeded_tool_signatures   "tool_name|arg_hash" strings that succeeded this run
-collected_markdown          Markdown snippets (chart images etc.) persisted across rounds
-search_result_urls          URLs from web_search results (for auto web_read fallback)
-loop_trace                  Per-round decision log [{round, decision, tools, reasoning, …}]
-blocked_mcp_servers         MCP servers whose tools could not be resolved this run
-consecutive_failed_rounds   Consecutive rounds where every tool call failed
-error                       Error string if run failed
+
+#### State field ownership by node
+
+```mermaid
+flowchart LR
+    subgraph input_fields ["Input fields (set once by caller)"]
+        F1["run_id\nagent_id\nconversation_id\ninput"]
+    end
+
+    subgraph LLM_writes ["call_llm writes"]
+        F2["messages ➕\npending_tool_calls ♻\nassistant_tool_call_message ♻\noutput ♻\nloop_trace ➕"]
+    end
+
+    subgraph CA_writes ["check_approval writes"]
+        F3["pending_tool_calls ♻\nwaiting_for_approval ♻"]
+    end
+
+    subgraph ET_writes ["execute_tools writes"]
+        F4["tool_results ♻\ntool_call_rounds ➕\nvisited_urls ➕\nfailed_tool_signatures ➕\nsucceeded_tool_signatures ➕\ncollected_markdown ➕\nsearch_result_urls ➕\nblocked_mcp_servers ➕\nconsecutive_failed_rounds ♻"]
+    end
+
+    subgraph FC_writes ["force_conclude writes"]
+        F5["output ♻\nmessages ➕"]
+    end
+
+    subgraph SR_writes ["save_result reads"]
+        F6["output\nerror\nrun_id"]
+    end
+
+    F1 --> LLM_writes
+    LLM_writes --> CA_writes
+    CA_writes --> ET_writes
+    ET_writes --> LLM_writes
+    ET_writes --> FC_writes
+    FC_writes --> SR_writes
+    LLM_writes --> SR_writes
+
+    note1["➕ = accumulate  ♻ = replace"]
 ```
 
 ### `_build_system_context` assembly order
@@ -118,36 +224,53 @@ Then `call_llm` appends:
 
 ### Tool execution pipeline inside `execute_tools`
 
-```
-pending_tool_calls (from state)
-        │
-        ▼
-Pre-filter (sequential):
-  • Skip duplicate URLs (visited_urls)          → short-circuit result
-  • Skip failed signatures (failed_sigs)        → error result
-  • Skip succeeded signatures (succeeded_sigs)  → error result
-  • Skip blocked MCP servers                    → error result + add to failed_sigs
-        │
-        ├──► parallel_tcs  (all others)
-        └──► serial_tcs    (file_write, shell_exec)
-        │
-        ▼
-Stamp ToolExecution.parallel_group (UUID hex) before dispatch
-        │
-        ├──► ThreadPoolExecutor → _run_one(tc) per parallel_tc
-        │         │
-        │         └── built-in tool?  → tool.execute(**args)
-        │             MCP tool?       → MCPConnectionPool.get().call_tool(...)
-        │
-        └──► Sequential loop → _run_one(tc) per serial_tc
-        │
-        ▼
-Post-process outcomes:
-  • Append to failed_sigs / succeeded_sigs
-  • Block MCP server if registry miss
-  • Accumulate collected_markdown
-  • Accumulate search_result_urls
-  • Count consecutive_failed_rounds
+```mermaid
+flowchart TD
+    TC["pending_tool_calls\n(from state)"]
+
+    TC --> PF
+
+    subgraph PF ["Pre-filter — sequential, one per tool call"]
+        PF1{"visited URL?"}
+        PF2{"failed signature?"}
+        PF3{"succeeded signature?"}
+        PF4{"blocked MCP server?"}
+        PF1 -- yes --> SHORT["short-circuit result\n(skip duplicate)"]
+        PF1 -- no --> PF2
+        PF2 -- yes --> ERR1["error result"]
+        PF2 -- no --> PF3
+        PF3 -- yes --> ERR2["error result"]
+        PF3 -- no --> PF4
+        PF4 -- yes --> ERR3["error result\n+ add to failed_sigs"]
+        PF4 -- no --> PASS["passes filter"]
+    end
+
+    PASS --> SPLIT{tool in\n_SERIAL_TOOLS?}
+    SPLIT -- "yes\n(file_write, shell_exec)" --> SER["serial_tcs"]
+    SPLIT -- no --> PAR["parallel_tcs"]
+
+    PAR --> STAMP["stamp ToolExecution.parallel_group\n(shared UUID hex per batch)"]
+    STAMP --> TPE["ThreadPoolExecutor\n_run_one(tc) per parallel_tc"]
+
+    SER --> SEQ["sequential loop\n_run_one(tc) per serial_tc"]
+
+    TPE --> RUN["_run_one(tc)"]
+    SEQ --> RUN
+
+    RUN --> RTYPE{built-in\nor MCP?}
+    RTYPE -- built-in --> EXEC1["tool.execute(**args)"]
+    RTYPE -- MCP --> EXEC2["MCPConnectionPool\n.get().call_tool(…)"]
+
+    EXEC1 --> POST
+    EXEC2 --> POST
+
+    subgraph POST ["Post-process outcomes"]
+        POST1["append to\nfailed_sigs / succeeded_sigs"]
+        POST2["block MCP server\nif registry miss"]
+        POST3["accumulate\ncollected_markdown"]
+        POST4["accumulate\nsearch_result_urls"]
+        POST5["update\nconsecutive_failed_rounds"]
+    end
 ```
 
 ---
