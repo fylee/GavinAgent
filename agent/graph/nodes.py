@@ -954,35 +954,52 @@ def execute_tools(state: AgentState) -> dict:
                 from agent.mcp.client import MCPTimeoutError as MCPTimeout
                 mcp_entry = get_mcp_registry().get(tool_name)
                 if mcp_entry:
-                    if te:
-                        te.status = ToolExecution.Status.RUNNING
-                        te.save(update_fields=["status"])
-                    start = _time.monotonic()
-                    try:
-                        mcp_result = MCPConnectionPool.get().call_tool(
-                            mcp_entry.server_name, mcp_entry.tool_name, args
-                        )
-                        result = {"output": mcp_result}
-                        duration = int((_time.monotonic() - start) * 1000)
-                        if te:
-                            te.status = ToolExecution.Status.SUCCESS
-                            te.output = result
-                            te.duration_ms = duration
-                            te.save(update_fields=["status", "output", "duration_ms"])
-                    except MCPTimeout as exc:
-                        result = {"error": str(exc)}
+                    # Check connection before attempting the call
+                    pool = MCPConnectionPool.get()
+                    if pool.get_status(mcp_entry.server_name) != "connected":
+                        result = {"error": f"MCP server '{mcp_entry.server_name}' is not connected in this worker. The server may need to be reconnected — please check the MCP management page."}
                         if te:
                             te.status = ToolExecution.Status.ERROR
                             te.output = result
                             te.save(update_fields=["status", "output"])
+                    else:
+                        if te:
+                            te.status = ToolExecution.Status.RUNNING
+                            te.save(update_fields=["status"])
+                        start = _time.monotonic()
+                        try:
+                            mcp_result = pool.call_tool(
+                                mcp_entry.server_name, mcp_entry.tool_name, args
+                            )
+                            result = {"output": mcp_result}
+                            duration = int((_time.monotonic() - start) * 1000)
+                            if te:
+                                te.status = ToolExecution.Status.SUCCESS
+                                te.output = result
+                                te.duration_ms = duration
+                                te.save(update_fields=["status", "output", "duration_ms"])
+                        except MCPTimeout as exc:
+                            result = {"error": str(exc)}
+                            if te:
+                                te.status = ToolExecution.Status.ERROR
+                                te.output = result
+                                te.save(update_fields=["status", "output"])
+                        except Exception as exc:
+                            err_msg = str(exc) or f"{type(exc).__name__} (no message)"
+                            result = {"error": f"MCP tool call failed: {err_msg}"}
+                            if te:
+                                te.status = ToolExecution.Status.ERROR
+                                te.output = result
+                                te.save(update_fields=["status", "output"])
                 else:
-                    result = {"error": "MCP server tools unavailable (server not connected). Do not retry — report the error to the user."}
+                    result = {"error": f"Tool '{tool_name}' not found in MCP registry — server may not be connected. Do not retry."}
                     if te:
                         te.status = ToolExecution.Status.ERROR
                         te.output = result
                         te.save(update_fields=["status", "output"])
             except Exception as exc:
-                result = {"error": f"Tool execution error: {exc}"}
+                err_msg = str(exc) or f"{type(exc).__name__} (no message)"
+                result = {"error": f"Tool execution error: {err_msg}"}
                 if te:
                     te.status = ToolExecution.Status.ERROR
                     te.output = result
