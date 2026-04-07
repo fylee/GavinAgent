@@ -97,7 +97,7 @@
 
   {# ── Context strip ─────────────────────────────────────────────────────── #}
   {% if context_trace or run.triggered_skills or rag_matches or mcp_servers_active %}
-  <div x-data="{ ctxOpen: false }">
+  <div id="ctx-box" hx-preserve x-data="{ ctxOpen: false }">
 
     {# Collapsed summary bar — one label per resource type #}
     <button @click="ctxOpen = !ctxOpen"
