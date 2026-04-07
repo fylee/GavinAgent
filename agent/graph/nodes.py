@@ -228,6 +228,12 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict]]:
         "When a tool result contains a `markdown` field, please copy that value "
         "verbatim into your reply. Do not describe or paraphrase it — reproduce it "
         "exactly as-is so that images and links render correctly."
+        "\n\n---\n\n"
+        "## Parallel tool calls\n\n"
+        "When you need results from multiple independent sources, call all relevant "
+        "tools in a single response at the same time — do not wait for one result "
+        "before requesting the next. Only call tools sequentially when a later call "
+        "genuinely depends on the output of an earlier one."
     )
 
     return content, triggered, rag_matches
@@ -713,6 +719,7 @@ def execute_tools(state: AgentState) -> dict:
     from agent.tools import get_tool
     from agent.tools.base import ToolTimeoutError
     from agent.models import AgentRun, ToolExecution
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Cancellation check — abort before running any tools if run was cancelled.
     try:
@@ -736,12 +743,19 @@ def execute_tools(state: AgentState) -> dict:
     search_result_urls = list(state.get("search_result_urls") or [])
     blocked_mcp_servers = list(state.get("blocked_mcp_servers") or [])
 
+    # ── Pre-filter: dedup / blocked-server checks (must be sequential, mutates lists) ──
+
+    # Serial tools run one-at-a-time (stateful side-effects).
+    _SERIAL_TOOLS = {"file_write", "shell_exec"}
+
+    parallel_tcs = []  # safe to run concurrently
+    serial_tcs = []    # must run sequentially after parallel batch
+
     for tc in pending:
         tool_name = tc["name"]
         args = tc.get("arguments", {})
 
-        # Block duplicate URL fetches across ALL url-based tools (web_read, api_get, api_post).
-        # A URL already fetched by any tool should not be re-fetched by another.
+        # Block duplicate URL fetches across ALL url-based tools.
         if tool_name in ("web_read", "api_get", "api_post"):
             url = args.get("url", "")
             if url and url in visited_urls:
@@ -754,7 +768,6 @@ def execute_tools(state: AgentState) -> dict:
             if url:
                 visited_urls.append(url)
 
-        # Block retrying a tool call that already failed with the same arguments
         sig = _tool_sig(tool_name, args)
         if sig in failed_sigs:
             tc_id = tc["id"]
@@ -771,7 +784,6 @@ def execute_tools(state: AgentState) -> dict:
             })
             continue
         # Block all tools from an MCP server that failed to resolve in a previous round.
-        # The server is unavailable (registry miss) — stop retrying with different args.
         if "__" in tool_name:
             server_prefix = tool_name.split("__")[0]
             if server_prefix in blocked_mcp_servers:
@@ -782,7 +794,21 @@ def execute_tools(state: AgentState) -> dict:
                 })
                 failed_sigs.append(sig)
                 continue
+
+        if tool_name in _SERIAL_TOOLS:
+            serial_tcs.append(tc)
+        else:
+            parallel_tcs.append(tc)
+
+    # ── Per-call executor ──────────────────────────────────────────────────────────
+
+    def _run_one(tc: dict) -> dict:
+        """Execute a single tool call. Returns a result dict (thread-safe)."""
+        import time as _time
+        tool_name = tc["name"]
+        args = tc.get("arguments", {})
         tc_id = tc["id"]
+        sig = _tool_sig(tool_name, args)
 
         te_id = tc.get("tool_execution_id")
         te = None
@@ -794,7 +820,6 @@ def execute_tools(state: AgentState) -> dict:
 
         tool = get_tool(tool_name)
         if tool is not None:
-            # Built-in tool
             if te:
                 te.status = ToolExecution.Status.RUNNING
                 te.save(update_fields=["status"])
@@ -822,7 +847,6 @@ def execute_tools(state: AgentState) -> dict:
                 from agent.mcp.registry import get_registry as get_mcp_registry
                 from agent.mcp.pool import MCPConnectionPool
                 from agent.mcp.client import MCPTimeoutError as MCPTimeout
-                import time as _time
                 mcp_entry = get_mcp_registry().get(tool_name)
                 if mcp_entry:
                     if te:
@@ -847,17 +871,6 @@ def execute_tools(state: AgentState) -> dict:
                             te.output = result
                             te.save(update_fields=["status", "output"])
                 else:
-                    # Registry miss: the MCP server's tools were not discovered
-                    # (e.g. worker restarted before reconnecting). Block the whole
-                    # server for this run so the LLM stops retrying.
-                    if "__" in tool_name:
-                        server_prefix = tool_name.split("__")[0]
-                        if server_prefix not in blocked_mcp_servers:
-                            blocked_mcp_servers.append(server_prefix)
-                            logger.warning(
-                                "MCP server '%s' blocked for this run — tools not in registry",
-                                server_prefix,
-                            )
                     result = {"error": "MCP server tools unavailable (server not connected). Do not retry — report the error to the user."}
                     if te:
                         te.status = ToolExecution.Status.ERROR
@@ -870,14 +883,62 @@ def execute_tools(state: AgentState) -> dict:
                     te.output = result
                     te.save(update_fields=["status", "output"])
 
+        return {"tc": tc, "result": result, "sig": sig}
+
+    # ── Run parallel batch ────────────────────────────────────────────────────────
+
+    max_workers = getattr(settings, "AGENT_TOOL_PARALLELISM", 8)
+    parallel_outcomes: list[dict] = []
+
+    if parallel_tcs:
+        if len(parallel_tcs) == 1:
+            # No need for thread overhead when there's only one call.
+            parallel_outcomes.append(_run_one(parallel_tcs[0]))
+        else:
+            workers = min(len(parallel_tcs), max_workers)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_run_one, tc): tc for tc in parallel_tcs}
+                for future in as_completed(futures):
+                    try:
+                        parallel_outcomes.append(future.result())
+                    except Exception as exc:
+                        tc = futures[future]
+                        parallel_outcomes.append({
+                            "tc": tc,
+                            "result": {"error": f"Tool execution error: {exc}"},
+                            "sig": _tool_sig(tc["name"], tc.get("arguments", {})),
+                        })
+
+    # ── Run serial batch (file_write, shell_exec) ────────────────────────────────
+
+    serial_outcomes: list[dict] = [_run_one(tc) for tc in serial_tcs]
+
+    # ── Post-process all outcomes ─────────────────────────────────────────────────
+
+    for outcome in parallel_outcomes + serial_outcomes:
+        tc = outcome["tc"]
+        result = outcome["result"]
+        sig = outcome["sig"]
+        tool_name = tc["name"]
+        tc_id = tc["id"]
+
         tool_results.append({"tool_call_id": tc_id, "result": result})
+
         if result.get("error"):
             failed_sigs.append(sig)
 
-            # ── Auto-fallback: when web_read fails, try the next untried URL
-            # from recent search results.  This is deterministic — no LLM
-            # decision needed — and prevents the agent from giving up after
-            # one blocked site.
+            # Block MCP server if registry miss
+            if not get_tool(tool_name) and "__" in tool_name:
+                server_prefix = tool_name.split("__")[0]
+                if server_prefix not in blocked_mcp_servers:
+                    if "unavailable" in result.get("error", ""):
+                        blocked_mcp_servers.append(server_prefix)
+                        logger.warning(
+                            "MCP server '%s' blocked for this run — tools not in registry",
+                            server_prefix,
+                        )
+
+            # ── Auto-fallback for web_read ────────────────────────────────────
             if tool_name == "web_read":
                 max_fallback = getattr(settings, "AGENT_WEB_READ_FALLBACK_LIMIT", 3)
                 fallback_tried = 0
@@ -896,12 +957,7 @@ def execute_tools(state: AgentState) -> dict:
                         fb_sig = _tool_sig("web_read", {"url": fallback_url})
                         if fallback_result.success:
                             succeeded_sigs.append(fb_sig)
-                            # Replace the error result with the successful fallback
-                            tool_results[-1] = {
-                                "tool_call_id": tc_id,
-                                "result": fb_dict,
-                            }
-                            # Create audit record for the successful fallback
+                            tool_results[-1] = {"tool_call_id": tc_id, "result": fb_dict}
                             run_obj = AgentRun.objects.filter(pk=state["run_id"]).first()
                             if run_obj:
                                 ToolExecution.objects.create(
@@ -917,7 +973,6 @@ def execute_tools(state: AgentState) -> dict:
                             break
                         else:
                             failed_sigs.append(fb_sig)
-                            # Create audit record for the failed fallback
                             run_obj = AgentRun.objects.filter(pk=state["run_id"]).first()
                             if run_obj:
                                 ToolExecution.objects.create(
@@ -934,20 +989,16 @@ def execute_tools(state: AgentState) -> dict:
                         logger.warning("web_read auto-fallback error for %s: %s", fallback_url, fb_exc)
         else:
             succeeded_sigs.append(sig)
-            # Persist any markdown output (e.g. chart images) so it survives
-            # across rounds even after tool_results is cleared.
             output = result.get("output", {})
             if isinstance(output, dict):
                 if output.get("markdown"):
                     collected_markdown.append(output["markdown"])
-                # Also check nested 'result' from run_skill for markdown images
                 elif isinstance(output.get("result"), str):
                     import re as _re
                     _md_imgs = _re.findall(r"!\[[^\]]*\]\([^)]+\)", output["result"])
                     if _md_imgs:
                         collected_markdown.extend(_md_imgs)
 
-            # When web_search succeeds, pool the result URLs for web_read fallback.
             if tool_name == "web_search":
                 search_output = result.get("output", {})
                 if isinstance(search_output, dict):
