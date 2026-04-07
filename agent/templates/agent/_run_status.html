@@ -12,24 +12,38 @@
 
 <div class="space-y-4">
 
-  {# Status indicator for active states #}
+  {# ── Phase indicator ────────────────────────────────────────────────────── #}
   {% if run.status == 'pending' %}
   <div class="rounded-lg border border-white/10 p-4 flex items-center gap-3" style="background-color: #202123;">
     <div class="w-2 h-2 rounded-full bg-gray-400 animate-pulse"></div>
     <span class="text-sm text-gray-400">Waiting to start…</span>
   </div>
+
   {% elif run.status == 'running' %}
   <div class="rounded-lg border border-blue-700/40 p-4 flex items-center gap-3" style="background-color: #202123;">
     <div class="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></div>
-    <span class="text-sm text-blue-300">Running…</span>
+    <span class="text-sm text-blue-300">
+      {% if agent_phase == 'assembling' %}Assembling context…
+      {% elif agent_phase == 'executing' %}Executing tools…
+      {% elif agent_phase == 'concluding' %}Writing response…
+      {% else %}Thinking…
+      {% endif %}
+    </span>
   </div>
+
   {% elif run.status == 'waiting' %}
-  <div class="rounded-lg border border-yellow-700/40 p-4" style="background-color: #202123;">
-    <p class="text-sm text-yellow-300 font-medium">Waiting for tool approval</p>
-    {% if run.output %}
-    <p class="text-sm text-gray-300 mt-2">{{ run.output }}</p>
+  <div class="rounded-lg border border-amber-600/60 p-4" style="background-color: #202123;">
+    <div class="flex items-center gap-2">
+      <span class="text-amber-400 text-lg">⏸</span>
+      <p class="text-sm text-amber-300 font-semibold">Waiting for your approval</p>
+    </div>
+    {% with pending_count=tool_executions|length %}
+    {% if pending_count %}
+    <p class="text-xs text-amber-400/80 mt-1">{{ pending_count }} tool call{{ pending_count|pluralize }} pending review below</p>
     {% endif %}
+    {% endwith %}
   </div>
+
   {% elif run.status == 'completed' %}
   <div class="rounded-lg border border-green-700/40 p-3 flex items-center gap-2" style="background-color: #202123;">
     <span class="text-green-400 text-xs">✓ Completed</span>
@@ -37,16 +51,39 @@
     <span class="text-gray-500 text-xs">in {{ run.started_at|timesince:run.finished_at }}</span>
     {% endif %}
   </div>
+
   {% elif run.status == 'failed' %}
   <div class="rounded-lg border border-red-700/40 p-3" style="background-color: #202123;">
     <span class="text-red-400 text-xs">✗ Failed</span>
     {% if run.error %}
-    <p class="text-red-300 text-xs mt-1">{{ run.error }}</p>
+    <p class="text-red-300 text-xs mt-1">{{ run.error|truncatechars:200 }}</p>
     {% endif %}
   </div>
   {% endif %}
 
-  {# Workflow info #}
+  {# ── Runtime warnings ───────────────────────────────────────────────────── #}
+  {% if run.status == 'running' %}
+    {% if tool_call_rounds and max_tool_call_rounds %}
+    {# Show warning when >= 75% of rounds used (computed in view as near_round_limit) #}
+    {% if near_round_limit %}
+    <div class="rounded-lg border border-amber-700/40 p-3 flex items-center gap-2" style="background-color: #202123;">
+      <span class="text-amber-400 text-xs">⚠ Round {{ tool_call_rounds }} / {{ max_tool_call_rounds }} — approaching limit</span>
+    </div>
+    {% endif %}
+    {% endif %}
+    {% if consecutive_failed_rounds == 1 %}
+    <div class="rounded-lg border border-amber-700/40 p-3" style="background-color: #202123;">
+      <span class="text-amber-400 text-xs">⚠ 1 consecutive failed round — agent may conclude early if next round also fails</span>
+    </div>
+    {% endif %}
+    {% if blocked_mcp_servers %}
+    <div class="rounded-lg border border-red-700/30 p-3" style="background-color: #202123;">
+      <span class="text-red-400 text-xs">⚠ MCP servers blocked: {{ blocked_mcp_servers|join:", " }}</span>
+    </div>
+    {% endif %}
+  {% endif %}
+
+  {# ── Workflow info ──────────────────────────────────────────────────────── #}
   {% if run.workflow %}
   <div class="flex items-center gap-2 text-xs text-gray-500">
     <span>Workflow:</span>
@@ -58,196 +95,374 @@
   </div>
   {% endif %}
 
-  {# Triggered skills #}
-  {% if run.triggered_skills %}
-  <div x-data="{ active: null }">
-    <div class="flex items-center gap-2 flex-wrap">
-      <span class="text-xs text-gray-500">Skills</span>
-      {% for skill in run.triggered_skills %}
-      <button @click="active = active === '{{ skill }}' ? null : '{{ skill }}'"
-              :class="active === '{{ skill }}' ? 'bg-purple-700 text-purple-100' : 'bg-purple-900 text-purple-300 hover:bg-purple-800'"
-              class="text-xs px-2 py-0.5 rounded-full transition-colors cursor-pointer">
-        {{ skill }}
-      </button>
-      {% endfor %}
-    </div>
-    {% for skill, body in skill_bodies.items %}
-    <div x-show="active === '{{ skill }}'" x-cloak class="mt-2 rounded-lg border border-purple-700/40 p-3" style="background-color: #202123;">
-      <div class="flex items-center justify-between mb-2">
-        <span class="text-xs font-semibold text-purple-300">{{ skill }}</span>
-        <button @click="active = null" class="text-xs text-gray-500 hover:text-gray-300">✕</button>
+  {# ── Context strip ─────────────────────────────────────────────────────── #}
+  {% if context_trace or run.triggered_skills or rag_matches or mcp_servers_active %}
+  <div x-data="{ ctxOpen: false }">
+
+    {# Collapsed summary bar — one label per resource type #}
+    <button @click="ctxOpen = !ctxOpen"
+            class="w-full flex items-center gap-3 rounded-lg border border-white/10 px-3 py-2 text-[10px] hover:border-white/20 transition-colors"
+            style="background-color: #202123;">
+      <span class="text-gray-600 flex-shrink-0">Context</span>
+      <span class="h-3 w-px bg-white/10 flex-shrink-0"></span>
+      {% if run.triggered_skills %}
+      <span class="flex items-center gap-1 text-purple-400">
+        <span>Skills</span>
+        <span class="bg-purple-900/60 text-purple-300 rounded px-1">{{ run.triggered_skills|length }}</span>
+      </span>
+      {% endif %}
+      {% if rag_matches %}
+      <span class="flex items-center gap-1 text-teal-400">
+        <span>RAG</span>
+        <span class="bg-teal-900/60 text-teal-300 rounded px-1">{{ rag_matches|length }}</span>
+      </span>
+      {% endif %}
+      {% if mcp_servers_active %}
+      <span class="flex items-center gap-1 text-indigo-400">
+        <span>MCP</span>
+        <span class="bg-indigo-900/60 text-indigo-300 rounded px-1">{{ mcp_servers_active|length }}</span>
+      </span>
+      {% endif %}
+      {% if context_trace.memory_excerpts %}
+      <span class="text-gray-500">Memory <span class="text-gray-400">{{ context_trace.memory_excerpts }}</span></span>
+      {% endif %}
+      {% if context_trace.tools_count %}
+      <span class="text-gray-500">Tools <span class="text-gray-400">{{ context_trace.tools_count }}</span></span>
+      {% endif %}
+      <svg :class="ctxOpen && 'rotate-180'" class="w-3 h-3 ml-auto transition-transform flex-shrink-0 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+      </svg>
+    </button>
+
+    {# Expanded — one section per resource type #}
+    <div x-show="ctxOpen" x-cloak
+         class="mt-1 rounded-lg border border-white/10 divide-y divide-white/5 text-xs overflow-hidden"
+         style="background-color: #202123;">
+
+      {# Skills #}
+      {% if context_trace.skills %}
+      <div class="p-3">
+        <p class="text-[10px] font-semibold text-purple-400 uppercase tracking-wider mb-2">Skills</p>
+        <div x-data="{ active: null }" class="space-y-1.5">
+          <div class="flex flex-wrap gap-1.5">
+            {% for skill in context_trace.skills %}
+            {% if skill.status == 'active' %}
+            <button @click="active = active === '{{ skill.name }}' ? null : '{{ skill.name }}'"
+                    :class="active === '{{ skill.name }}' ? 'bg-purple-700 text-purple-100' : 'bg-purple-900/70 text-purple-300 hover:bg-purple-800/70'"
+                    class="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full transition-colors cursor-pointer">
+              <span>{{ skill.name }}</span>
+              {% if skill.match %}<span class="text-purple-500/70">{{ skill.match }}</span>{% endif %}
+            </button>
+            {% else %}
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-gray-800/50 text-gray-600">{{ skill.name }}</span>
+            {% endif %}
+            {% endfor %}
+          </div>
+          {% for skill, body in skill_bodies.items %}
+          <div x-show="active === '{{ skill }}'" x-cloak class="rounded border border-purple-700/30 p-2" style="background-color: #18181b;">
+            <pre class="text-[10px] text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-48">{{ body }}</pre>
+          </div>
+          {% endfor %}
+        </div>
       </div>
-      <pre class="text-xs text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-64">{{ body }}</pre>
+      {% elif run.triggered_skills %}
+      <div class="p-3">
+        <p class="text-[10px] font-semibold text-purple-400 uppercase tracking-wider mb-2">Skills</p>
+        <div x-data="{ active: null }" class="space-y-1.5">
+          <div class="flex flex-wrap gap-1.5">
+            {% for skill in run.triggered_skills %}
+            <button @click="active = active === '{{ skill }}' ? null : '{{ skill }}'"
+                    :class="active === '{{ skill }}' ? 'bg-purple-700 text-purple-100' : 'bg-purple-900/70 text-purple-300 hover:bg-purple-800/70'"
+                    class="text-[10px] px-2 py-0.5 rounded-full transition-colors cursor-pointer">
+              {{ skill }}
+            </button>
+            {% endfor %}
+          </div>
+          {% for skill, body in skill_bodies.items %}
+          <div x-show="active === '{{ skill }}'" x-cloak class="rounded border border-purple-700/30 p-2" style="background-color: #18181b;">
+            <pre class="text-[10px] text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-48">{{ body }}</pre>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# RAG / Knowledge #}
+      {% if rag_matches %}
+      <div class="p-3">
+        <p class="text-[10px] font-semibold text-teal-400 uppercase tracking-wider mb-2">Knowledge (RAG)</p>
+        <div class="space-y-1">
+          {% for match in rag_matches %}
+          <div class="flex items-center justify-between">
+            <span class="text-teal-300 flex items-center gap-1"><span class="text-teal-600">📄</span> {{ match.title }}</span>
+            <span class="text-teal-600/70 text-[10px] ml-2 flex-shrink-0">{{ match.similarity }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# MCP servers #}
+      {% if mcp_servers_active %}
+      <div class="p-3">
+        <p class="text-[10px] font-semibold text-indigo-400 uppercase tracking-wider mb-2">MCP Servers</p>
+        <div class="flex flex-wrap gap-1.5">
+          {% for srv in mcp_servers_active %}
+          <span class="text-[10px] px-2 py-0.5 rounded bg-indigo-900/50 text-indigo-300">{{ srv }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Memory #}
+      {% if context_trace.memory_excerpts %}
+      <div class="p-3">
+        <p class="text-[10px] font-semibold text-amber-400/80 uppercase tracking-wider mb-1">Memory</p>
+        <span class="text-gray-400">{{ context_trace.memory_excerpts }} excerpt{{ context_trace.memory_excerpts|pluralize }} injected</span>
+      </div>
+      {% endif %}
+
+      {# System / prompt stats #}
+      {% if context_trace.tools_count or context_trace.total_prompt_chars %}
+      <div class="p-3">
+        <p class="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">System</p>
+        <div class="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500">
+          {% if context_trace.tools_count %}
+          <span>🔧 {{ context_trace.tools_count }} tools available</span>
+          {% endif %}
+          {% if context_trace.agents_md_chars %}
+          <span>AGENTS.md {{ context_trace.agents_md_chars }} chars</span>
+          {% endif %}
+          {% if context_trace.soul_md_chars %}
+          <span>SOUL.md {{ context_trace.soul_md_chars }} chars</span>
+          {% endif %}
+          {% if context_trace.history_messages %}
+          <span>{{ context_trace.history_messages }} history msgs{% if context_trace.history_dropped %} <span class="text-amber-600">({{ context_trace.history_dropped }} dropped)</span>{% endif %}</span>
+          {% endif %}
+          {% if context_trace.total_prompt_chars %}
+          <span>~{{ context_trace.total_prompt_chars }} total chars</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
     </div>
-    {% endfor %}
   </div>
   {% endif %}
 
-  {# RAG knowledge matches #}
-  {% if rag_matches %}
-  <div class="flex items-center gap-2 flex-wrap">
-    <span class="text-xs text-gray-500">Knowledge</span>
-    {% for match in rag_matches %}
-    <span class="text-xs px-2 py-0.5 rounded-full bg-teal-900 text-teal-300">
-      📄 {{ match.title }} <span class="text-teal-500 ml-0.5">{{ match.similarity }}</span>
-    </span>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  {# Agent loop decision trace #}
+  {# ── Unified round timeline ─────────────────────────────────────────────── #}
   {% if loop_trace %}
-  <div x-data="{ expanded: false }">
-    <button @click="expanded = !expanded" class="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 transition-colors cursor-pointer">
-      <span>Loop Trace</span>
-      <span class="text-gray-600">({{ loop_trace|length }} round{{ loop_trace|length|pluralize }}))</span>
+  <div x-data="{ expanded: {% if run.status == 'running' or run.status == 'waiting' %}true{% else %}false{% endif %} }">
+    <button @click="expanded = !expanded"
+            class="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 transition-colors cursor-pointer mb-2">
+      <span>Execution trace</span>
+      <span class="text-gray-600">({{ loop_trace|length }} round{{ loop_trace|length|pluralize }})</span>
       <svg :class="expanded && 'rotate-180'" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
       </svg>
     </button>
-    <div x-show="expanded" x-cloak class="mt-2 space-y-1">
+
+    <div x-show="expanded" x-cloak class="space-y-3">
       {% for entry in loop_trace %}
-      <div class="flex items-start gap-2 text-xs">
-        {# Round connector line #}
-        <div class="flex flex-col items-center flex-shrink-0 w-5">
-          <span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold
+      <div class="rounded-lg border {% if entry.forced %}border-red-700/40{% elif entry.decision == 'answer' %}border-green-700/30{% else %}border-white/10{% endif %} overflow-hidden"
+           style="background-color: #202123;">
+
+        {# Round header #}
+        <div class="flex items-center gap-2 px-3 py-2 border-b border-white/5 flex-wrap">
+          {# Round badge #}
+          <span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0
             {% if entry.decision == 'tool_call' %}bg-blue-900 text-blue-300
             {% else %}bg-green-900 text-green-300{% endif %}">
             {{ entry.round }}
           </span>
-          {% if not forloop.last %}
-          <div class="w-px h-4 bg-gray-700"></div>
-          {% endif %}
-        </div>
-        <div class="pt-0.5 min-w-0">
+
+          {# Decision label #}
           {% if entry.decision == 'tool_call' %}
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-blue-400">🔧 Round {{ entry.round }}</span>
-              {% if entry.parallel_count and entry.parallel_count > 1 %}
-              <span class="text-[10px] text-violet-400 font-semibold">⇉ {{ entry.parallel_count }} in parallel</span>
-              {% endif %}
-              {% for tool in entry.tools %}
-                <code class="text-blue-300 font-mono text-[10px]">{{ tool }}</code>{% if not forloop.last %},{% endif %}
-              {% endfor %}
-            </div>
-          {% else %}
-            <span class="text-green-400">💬 Final answer</span>
+          <span class="text-xs text-blue-400">🔧 Round {{ entry.round }}</span>
+          {% if max_tool_call_rounds %}
+          <span class="text-[10px] text-gray-600">/ {{ max_tool_call_rounds }}</span>
           {% endif %}
-          {% if entry.reasoning %}
-            <p class="text-gray-500 mt-0.5 break-words">{{ entry.reasoning|truncatewords:40 }}</p>
+          {% if entry.parallel_count and entry.parallel_count > 1 %}
+          <span class="text-[10px] text-violet-400 font-semibold">⇉ {{ entry.parallel_count }} in parallel</span>
+          {% endif %}
+          {% if entry.tool_wall_ms %}
+          <span class="text-[10px] text-gray-600">wall {{ entry.tool_wall_ms }}ms</span>
+          {% endif %}
+          {% else %}
+          <span class="text-xs {% if entry.forced %}text-red-400{% else %}text-green-400{% endif %}">
+            {% if entry.forced %}⚠ Forced conclusion{% else %}💬 Final answer{% endif %}
+          </span>
+          {% endif %}
+
+          {# Tool names for tool_call rounds #}
+          {% if entry.decision == 'tool_call' %}
+          <div class="flex flex-wrap gap-1 ml-1">
+            {% for tool in entry.tools %}
+            <code class="text-[10px] font-mono text-blue-300/80">{{ tool }}</code>{% if not forloop.last %}<span class="text-gray-700">,</span>{% endif %}
+            {% endfor %}
+          </div>
           {% endif %}
         </div>
+
+        <div class="px-3 py-2 space-y-2">
+          {# Pre-tool reasoning #}
+          {% if entry.reasoning %}
+          <p class="text-xs text-gray-200 break-words">
+            <span class="text-gray-500 select-none">💭 </span>{{ entry.reasoning|truncatewords:80 }}
+          </p>
+          {% endif %}
+
+          {# Tool execution cards for this round #}
+          {% if entry.tool_executions %}
+          <div class="space-y-1.5">
+            {% for te in entry.tool_executions %}
+
+            {# Parallel group header — shown once per group #}
+            {% if te.is_first_in_group and te.is_parallel_group %}
+            <div class="flex items-center gap-2 pt-1">
+              <span class="text-[10px] text-violet-400 font-semibold">⇉ parallel ×{{ te.group_size }}</span>
+              <span class="flex-1 h-px bg-violet-800/30"></span>
+            </div>
+            {% elif te.is_first_in_group and te.is_serial %}
+            <div class="flex items-center gap-2 pt-1">
+              <span class="text-[10px] text-gray-600 font-semibold">→ sequential</span>
+              <span class="flex-1 h-px bg-gray-700/30"></span>
+            </div>
+            {% endif %}
+
+            <div x-data="{ showOutput: false }"
+                 class="rounded border p-2 space-y-1.5
+                   {% if te.tool_type == 'mcp' %}border-indigo-900/50
+                   {% elif te.tool_type == 'skill' %}border-purple-900/50
+                   {% elif te.is_parallel_group %}border-violet-800/30
+                   {% else %}border-white/5{% endif %}"
+                 style="background-color: #1a1a1c;">
+
+              {# Header: type badge + tool name + status + timing #}
+              <div class="flex items-center gap-2 flex-wrap">
+                {# Resource type badge #}
+                {% if te.tool_type == 'mcp' %}
+                <span class="text-[9px] px-1.5 py-0.5 rounded bg-indigo-900/60 text-indigo-400 font-semibold flex-shrink-0">MCP · {{ te.mcp_server }}</span>
+                {% elif te.tool_type == 'skill' %}
+                <span class="text-[9px] px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-400 font-semibold flex-shrink-0">Skill</span>
+                {% else %}
+                <span class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 font-semibold flex-shrink-0">Built-in</span>
+                {% endif %}
+                {# Display name (stripped of server prefix for MCP) #}
+                <code class="text-xs font-mono
+                  {% if te.tool_type == 'mcp' %}text-indigo-300
+                  {% elif te.tool_type == 'skill' %}text-purple-300
+                  {% else %}text-blue-300{% endif %}
+                  font-semibold">{{ te.display_name }}</code>
+                {# Status #}
+                <span class="text-[10px] px-1.5 py-0.5 rounded-full
+                  {% if te.status == 'success' %}bg-green-900 text-green-300
+                  {% elif te.status == 'error' %}bg-red-900 text-red-300
+                  {% elif te.status == 'rejected' %}bg-orange-900 text-orange-300
+                  {% elif te.status == 'pending' %}bg-yellow-900 text-yellow-300
+                  {% elif te.status == 'running' %}bg-blue-900 text-blue-300
+                  {% else %}bg-gray-700 text-gray-300{% endif %}">
+                  {{ te.get_status_display }}
+                </span>
+                {% if te.duration_ms %}
+                <span class="text-[10px] {% if te.is_parallel_group and te.group_size > 1 %}text-amber-400/80{% else %}text-gray-600{% endif %}">
+                  {{ te.duration_ms }}ms{% if te.is_parallel_group and te.group_size > 1 %} ⚑{% endif %}
+                </span>
+                {% endif %}
+                {% if te.requires_approval %}
+                <span class="text-[10px] text-yellow-500">⚠ approval</span>
+                {% endif %}
+                {% if te.output %}
+                <div class="flex-1 flex justify-end">
+                  <button @click="showOutput = !showOutput"
+                          class="text-[10px] text-gray-600 hover:text-gray-400 transition-colors">
+                    <span x-text="showOutput ? 'hide' : 'output'">output</span>
+                  </button>
+                </div>
+                {% endif %}
+              </div>
+
+              {# Parameters #}
+              {% if te.input %}
+              <div class="bg-black/20 rounded p-1.5 space-y-0.5">
+                {% for key, value in te.input.items %}
+                <div class="flex gap-2 text-[10px]">
+                  <span class="text-gray-600 flex-shrink-0">{{ key }}</span>
+                  <span class="text-gray-300 font-mono break-all">{{ value }}</span>
+                </div>
+                {% endfor %}
+              </div>
+              {% endif %}
+
+              {# Output (collapsible) #}
+              {% if te.output %}
+              <div x-show="showOutput" x-cloak>
+                <pre class="text-[10px] text-gray-300 font-mono bg-black/20 rounded p-1.5 overflow-x-auto max-h-40">{{ te.output|pprint }}</pre>
+              </div>
+              {% endif %}
+
+              {# Inline approve/reject for pending TEs on a waiting run #}
+              {% if te.status == 'pending' and run.status == 'waiting' %}
+              <div class="flex items-center gap-2 mt-1">
+                <form method="post" action="{% url 'agent:approve' tool_id=te.id %}"
+                      hx-post="{% url 'agent:approve' tool_id=te.id %}"
+                      hx-target="#run-status-container"
+                      hx-swap="innerHTML">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="approve">
+                  <button type="submit"
+                          class="text-xs px-3 py-1 rounded-lg bg-green-700 hover:bg-green-600 text-white transition-colors">
+                    Approve
+                  </button>
+                </form>
+                <form method="post" action="{% url 'agent:approve' tool_id=te.id %}"
+                      hx-post="{% url 'agent:approve' tool_id=te.id %}"
+                      hx-target="#run-status-container"
+                      hx-swap="innerHTML">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="reject">
+                  <button type="submit"
+                          class="text-xs px-3 py-1 rounded-lg bg-red-700 hover:bg-red-600 text-white transition-colors">
+                    Reject
+                  </button>
+                </form>
+              </div>
+              {% endif %}
+
+              {% if te.approved_at %}
+              <p class="text-[10px] text-gray-600">Approved {{ te.approved_at|date:"H:i:s" }}</p>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          {# Continue/Answer reason (from next round's LLM preamble) #}
+          {% if entry.continue_reason %}
+          <p class="text-xs text-gray-300 border-l-2 border-blue-700/60 pl-2 break-words">→ {{ entry.continue_reason }}</p>
+          {% endif %}
+        </div>
+
       </div>
       {% endfor %}
-    </div>
-  </div>
-  {% endif %}
 
-  {# Tool execution trace #}
-  {% if tool_executions %}
-  <div>
-    <h3 class="text-xs text-gray-400 uppercase tracking-wider mb-2">Tool Executions</h3>
-    <div class="space-y-2">
-      {% for te in tool_executions %}
-
-      {# Parallel group header — shown once per group when size > 1 #}
-      {% if te.is_first_in_group and te.is_parallel_group %}
-      <div class="flex items-center gap-2 mt-2">
-        <span class="text-[10px] text-violet-400 font-semibold tracking-wide">⇉ parallel batch ×{{ te.group_size }}</span>
-        <span class="flex-1 h-px bg-violet-800/40"></span>
-      </div>
-      {% elif te.is_first_in_group and te.is_serial %}
-      <div class="flex items-center gap-2 mt-2">
-        <span class="text-[10px] text-gray-500 font-semibold tracking-wide">→ sequential</span>
-        <span class="flex-1 h-px bg-gray-700/40"></span>
+      {# Live spinner when still running #}
+      {% if run.status == 'running' %}
+      <div class="flex items-center gap-1.5 px-1 py-2">
+        <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay:0ms"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay:150ms"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay:300ms"></span>
       </div>
       {% endif %}
-
-      <div x-data="{ showOutput: false }"
-           class="rounded-lg border p-3 space-y-2 {% if te.is_parallel_group %}border-violet-800/30{% else %}border-white/10{% endif %}"
-           style="background-color: #202123;">
-
-        {# Header: tool name + status + timing #}
-        <div class="flex items-center gap-2 flex-wrap">
-          <code class="text-xs font-mono text-blue-300 font-semibold">{{ te.tool_name }}</code>
-          <span class="text-xs px-2 py-0.5 rounded-full
-            {% if te.status == 'success' %}bg-green-900 text-green-300
-            {% elif te.status == 'error' %}bg-red-900 text-red-300
-            {% elif te.status == 'rejected' %}bg-orange-900 text-orange-300
-            {% elif te.status == 'pending' %}bg-yellow-900 text-yellow-300
-            {% elif te.status == 'running' %}bg-blue-900 text-blue-300
-            {% else %}bg-gray-700 text-gray-300{% endif %}">
-            {{ te.get_status_display }}
-          </span>
-          {% if te.duration_ms %}
-          <span class="{% if te.is_parallel_group and te.group_size > 1 %}text-amber-400/80{% else %}text-xs text-gray-500{% endif %} text-xs">{{ te.duration_ms }}ms{% if te.is_parallel_group and te.group_size > 1 %} ⚑{% endif %}</span>
-          {% endif %}
-          {% if te.requires_approval %}
-          <span class="text-xs text-yellow-500">⚠ approval required</span>
-          {% endif %}
-          {% if te.output %}
-          <div class="flex-1 flex justify-end">
-            <button @click="showOutput = !showOutput"
-                    class="text-xs text-gray-500 hover:text-gray-300 transition-colors">
-              <span x-text="showOutput ? 'Hide output' : 'Show output'">Show output</span>
-            </button>
-          </div>
-          {% endif %}
-        </div>
-
-        {# Parameters — always visible #}
-        {% if te.input %}
-        <div class="bg-black/30 rounded p-2 space-y-1">
-          {% for key, value in te.input.items %}
-          <div class="flex gap-2 text-xs">
-            <span class="text-gray-500 flex-shrink-0">{{ key }}</span>
-            <span class="text-gray-200 font-mono break-all">{{ value }}</span>
-          </div>
-          {% endfor %}
-        </div>
-        {% endif %}
-
-        {# Output — collapsible #}
-        {% if te.output %}
-        <div x-show="showOutput" x-cloak class="mt-1">
-          <pre class="text-xs text-gray-300 font-mono bg-black/30 rounded p-2 overflow-x-auto max-h-48">{{ te.output|pprint }}</pre>
-        </div>
-        {% endif %}
-
-        {# Inline approve/reject for pending TEs on a waiting run #}
-        {% if te.status == 'pending' and run.status == 'waiting' %}
-        <div class="flex items-center gap-2 mt-2">
-          <form method="post" action="{% url 'agent:approve' tool_id=te.id %}"
-                hx-post="{% url 'agent:approve' tool_id=te.id %}"
-                hx-target="#run-status-container"
-                hx-swap="innerHTML">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="approve">
-            <button type="submit"
-                    class="text-xs px-3 py-1 rounded-lg bg-green-700 hover:bg-green-600 text-white transition-colors">
-              Approve
-            </button>
-          </form>
-          <form method="post" action="{% url 'agent:approve' tool_id=te.id %}"
-                hx-post="{% url 'agent:approve' tool_id=te.id %}"
-                hx-target="#run-status-container"
-                hx-swap="innerHTML">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="reject">
-            <button type="submit"
-                    class="text-xs px-3 py-1 rounded-lg bg-red-700 hover:bg-red-600 text-white transition-colors">
-              Reject
-            </button>
-          </form>
-        </div>
-        {% endif %}
-
-        {% if te.approved_at %}
-        <p class="text-xs text-gray-500 mt-1">Approved at {{ te.approved_at|date:"H:i:s" }}</p>
-        {% endif %}
-      </div>
-      {% endfor %}
     </div>
+  </div>
+
+  {# Show spinner before first loop_trace entry exists #}
+  {% elif run.status == 'running' %}
+  <div class="flex items-center gap-1.5 px-1 py-2">
+    <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay:0ms"></span>
+    <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay:150ms"></span>
+    <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay:300ms"></span>
   </div>
   {% endif %}
 
