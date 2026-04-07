@@ -226,6 +226,9 @@ class MessageStreamView(View):
                 ToolExecution.objects.filter(run=active_agent_run)
                 .order_by("created_at")
             )
+            # Annotate with parallel group metadata for the template
+            from agent.views import _annotate_tool_executions
+            tool_executions = _annotate_tool_executions(tool_executions)
             triggered_skills = active_agent_run.triggered_skills or []
             loop_trace = (active_agent_run.graph_state or {}).get("loop_trace", [])
             # MCP servers: prefer graph_state (set early by call_llm), supplement

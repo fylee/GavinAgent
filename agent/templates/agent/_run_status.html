@@ -121,10 +121,15 @@
         </div>
         <div class="pt-0.5 min-w-0">
           {% if entry.decision == 'tool_call' %}
-            <span class="text-blue-400">🔧 Tool call:</span>
-            {% for tool in entry.tools %}
-              <code class="text-blue-300 font-mono">{{ tool }}</code>{% if not forloop.last %},{% endif %}
-            {% endfor %}
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-blue-400">🔧 Round {{ entry.round }}</span>
+              {% if entry.parallel_count and entry.parallel_count > 1 %}
+              <span class="text-[10px] text-violet-400 font-semibold">⇉ {{ entry.parallel_count }} in parallel</span>
+              {% endif %}
+              {% for tool in entry.tools %}
+                <code class="text-blue-300 font-mono text-[10px]">{{ tool }}</code>{% if not forloop.last %},{% endif %}
+              {% endfor %}
+            </div>
           {% else %}
             <span class="text-green-400">💬 Final answer</span>
           {% endif %}
@@ -144,8 +149,22 @@
     <h3 class="text-xs text-gray-400 uppercase tracking-wider mb-2">Tool Executions</h3>
     <div class="space-y-2">
       {% for te in tool_executions %}
+
+      {# Parallel group header — shown once per group when size > 1 #}
+      {% if te.is_first_in_group and te.is_parallel_group %}
+      <div class="flex items-center gap-2 mt-2">
+        <span class="text-[10px] text-violet-400 font-semibold tracking-wide">⇉ parallel batch ×{{ te.group_size }}</span>
+        <span class="flex-1 h-px bg-violet-800/40"></span>
+      </div>
+      {% elif te.is_first_in_group and te.is_serial %}
+      <div class="flex items-center gap-2 mt-2">
+        <span class="text-[10px] text-gray-500 font-semibold tracking-wide">→ sequential</span>
+        <span class="flex-1 h-px bg-gray-700/40"></span>
+      </div>
+      {% endif %}
+
       <div x-data="{ showOutput: false }"
-           class="rounded-lg border border-white/10 p-3 space-y-2"
+           class="rounded-lg border p-3 space-y-2 {% if te.is_parallel_group %}border-violet-800/30{% else %}border-white/10{% endif %}"
            style="background-color: #202123;">
 
         {# Header: tool name + status + timing #}
@@ -161,7 +180,7 @@
             {{ te.get_status_display }}
           </span>
           {% if te.duration_ms %}
-          <span class="text-xs text-gray-500">{{ te.duration_ms }}ms</span>
+          <span class="{% if te.is_parallel_group and te.group_size > 1 %}text-amber-400/80{% else %}text-xs text-gray-500{% endif %} text-xs">{{ te.duration_ms }}ms{% if te.is_parallel_group and te.group_size > 1 %} ⚑{% endif %}</span>
           {% endif %}
           {% if te.requires_approval %}
           <span class="text-xs text-yellow-500">⚠ approval required</span>

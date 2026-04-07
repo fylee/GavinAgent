@@ -28,6 +28,34 @@ def _load_skill_bodies(skill_names: list[str]) -> dict[str, str]:
         result[name] = body
     return result
 
+
+def _annotate_tool_executions(tool_executions) -> list:
+    """
+    Annotate each ToolExecution with parallel-group metadata for template rendering:
+      - group_size:        total TEs sharing the same parallel_group
+      - is_first_in_group: True for the first TE in each group
+      - is_parallel_group: True when group_size > 1 (actually ran concurrently)
+      - is_serial:         already on the model, True for file_write / shell_exec
+    Returns a plain list (materialises the queryset).
+    """
+    from collections import Counter, defaultdict
+    tes = list(tool_executions)
+    # Count per group
+    group_counts: Counter = Counter(te.parallel_group for te in tes if te.parallel_group)
+    seen_groups: set = set()
+    for te in tes:
+        g = te.parallel_group
+        if g:
+            te.group_size = group_counts[g]
+            te.is_parallel_group = group_counts[g] > 1 and not te.is_serial
+            te.is_first_in_group = g not in seen_groups
+            seen_groups.add(g)
+        else:
+            te.group_size = 1
+            te.is_parallel_group = False
+            te.is_first_in_group = True
+    return tes
+
 from django import forms
 from django.conf import settings
 from django.core.paginator import Paginator
@@ -144,7 +172,7 @@ class RunDetailView(View):
 
     def get(self, request: HttpRequest, pk) -> HttpResponse:
         run = get_object_or_404(AgentRun.objects.select_related("agent"), pk=pk)
-        tool_executions = run.tool_executions.order_by("created_at")
+        tool_executions = _annotate_tool_executions(run.tool_executions.order_by("created_at"))
         gs = run.graph_state or {}
         ctx = {
             "run": run,
@@ -159,7 +187,7 @@ class RunDetailView(View):
 class RunStatusView(View):
     def get(self, request: HttpRequest, pk) -> HttpResponse:
         run = get_object_or_404(AgentRun, pk=pk)
-        tool_executions = run.tool_executions.order_by("created_at")
+        tool_executions = _annotate_tool_executions(run.tool_executions.order_by("created_at"))
         gs = run.graph_state or {}
         html = render_to_string(
             "agent/_run_status.html",
@@ -191,7 +219,7 @@ class RunRespondView(View):
         execute_agent_run.delay(str(run.id))
 
         if request.htmx:
-            tool_executions = run.tool_executions.order_by("created_at")
+            tool_executions = _annotate_tool_executions(run.tool_executions.order_by("created_at"))
             gs = run.graph_state or {}
             html = render_to_string(
                 "agent/_run_status.html",
@@ -212,7 +240,7 @@ class RunCancelView(View):
             run.save(update_fields=["status", "error", "finished_at"])
 
         if request.htmx:
-            tool_executions = run.tool_executions.order_by("created_at")
+            tool_executions = _annotate_tool_executions(run.tool_executions.order_by("created_at"))
             gs = run.graph_state or {}
             html = render_to_string(
                 "agent/_run_status.html",

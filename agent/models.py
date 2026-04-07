@@ -195,6 +195,11 @@ class ToolExecution(TimeStampedModel):
     requires_approval = models.BooleanField(default=False)
     approved_at = models.DateTimeField(null=True, blank=True)
     duration_ms = models.IntegerField(null=True, blank=True)
+    # Parallel execution grouping: all TEs dispatched in the same concurrent
+    # batch share the same parallel_group value (short hex).  Serial tools
+    # (file_write, shell_exec) have is_serial=True and their own group.
+    parallel_group = models.CharField(max_length=8, blank=True, default="")
+    is_serial = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-created_at"]

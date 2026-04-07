@@ -531,6 +531,8 @@ def call_llm(state: AgentState) -> dict:
             "decision": "tool_call",
             "tools": [tc.function.name for tc in message.tool_calls],
             "reasoning": (message.content or "").strip() or None,
+            # Count of parallel calls in this round — >1 means they run concurrently
+            "parallel_count": len(message.tool_calls),
         }
         loop_trace.append(trace_entry)
 
@@ -887,6 +889,32 @@ def execute_tools(state: AgentState) -> dict:
                     te.save(update_fields=["status", "output"])
 
         return {"tc": tc, "result": result, "sig": sig}
+
+    # ── Stamp parallel / serial group IDs on ToolExecutions ─────────────────────
+    # All TEs dispatched in the same concurrent batch share a parallel_group ID
+    # (8-char hex) so the UI can bracket them together and mark the critical path.
+    import uuid as _uuid
+
+    if parallel_tcs:
+        _parallel_group = _uuid.uuid4().hex[:8]
+        _is_parallel = len(parallel_tcs) > 1
+        for _tc in parallel_tcs:
+            _te_id = _tc.get("tool_execution_id")
+            if _te_id:
+                ToolExecution.objects.filter(pk=_te_id).update(
+                    parallel_group=_parallel_group,
+                    is_serial=False,
+                )
+
+    if serial_tcs:
+        _serial_group = _uuid.uuid4().hex[:8]
+        for _tc in serial_tcs:
+            _te_id = _tc.get("tool_execution_id")
+            if _te_id:
+                ToolExecution.objects.filter(pk=_te_id).update(
+                    parallel_group=_serial_group,
+                    is_serial=True,
+                )
 
     # ── Run parallel batch ────────────────────────────────────────────────────────
 
