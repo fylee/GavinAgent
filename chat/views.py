@@ -314,8 +314,47 @@ class MessageStreamView(View):
         )
 
         if assistant_msg:
+            msg_ctx: dict = {"message": assistant_msg}
+            run_id = (assistant_msg.metadata or {}).get("run_id")
+            if run_id:
+                try:
+                    from agent.models import AgentRun, ToolExecution
+                    completed_run = AgentRun.objects.get(pk=run_id)
+                    gs = completed_run.graph_state or {}
+                    run_tes = list(
+                        ToolExecution.objects.filter(run=completed_run)
+                        .order_by("created_at")
+                        .select_related()
+                    )
+                    for te in run_tes:
+                        if "__" in te.tool_name:
+                            te.display_name = te.tool_name.split("__", 1)[1]
+                            te.is_mcp = True
+                        else:
+                            te.display_name = te.tool_name
+                            te.is_mcp = False
+                    loop_trace = gs.get("loop_trace", [])
+                    te_by_round: dict = {}
+                    for te in run_tes:
+                        te_by_round.setdefault(te.round or 0, []).append(te)
+                    loop_trace_with_tes = [
+                        {**entry, "tool_executions": te_by_round.get(entry.get("round", 0), [])}
+                        for entry in loop_trace
+                    ]
+                    bare_tes = run_tes if (not loop_trace and run_tes) else []
+                    run_triggered_skills = completed_run.triggered_skills or []
+                    run_mcp_servers = gs.get("mcp_servers_active", [])
+                    if run_tes or run_triggered_skills or run_mcp_servers or loop_trace:
+                        msg_ctx["run_trace"] = {
+                            "tool_executions": bare_tes,
+                            "triggered_skills": run_triggered_skills,
+                            "mcp_servers_active": run_mcp_servers,
+                            "loop_trace": loop_trace_with_tes,
+                        }
+                except Exception:
+                    pass
             html = render_to_string(
-                "chat/_message.html", {"message": assistant_msg}, request=request
+                "chat/_message.html", msg_ctx, request=request
             )
         else:
             html = render_to_string(

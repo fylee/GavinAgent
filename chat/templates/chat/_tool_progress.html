@@ -1,14 +1,18 @@
-<div id="typing-indicator"
+<div id="{% if not finished %}typing-indicator{% endif %}"
+     {% if not finished %}
      hx-get="{% url 'chat:message-stream' conversation_pk=conversation.id pk=user_msg_id %}"
      hx-trigger="every 1s"
      hx-target="this"
-     hx-swap="outerHTML">
-  <div class="flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full">
+     hx-swap="outerHTML"
+     {% endif %}>
+  <div class="{% if not finished %}flex gap-3 px-4 py-2 max-w-3xl mx-auto w-full{% endif %}">
+    {% if not finished %}
     <div class="flex-shrink-0 w-7 h-7 rounded-full bg-[#19c37d] flex items-center justify-center mt-0.5">
       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
       </svg>
     </div>
+    {% endif %}
     <div class="flex-1 min-w-0 space-y-2">
 
       {# Triggered skills #}
@@ -251,11 +255,13 @@
       {% endif %}{# /tool_executions bare fallback #}
 
       {# Thinking dots — still working #}
+      {% if not finished %}
       <div class="flex items-center gap-1 py-1">
         <span class="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0ms"></span>
         <span class="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 150ms"></span>
         <span class="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 300ms"></span>
       </div>
+      {% endif %}
     </div>
   </div>
 </div>

@@ -29,6 +29,31 @@
     <div class="text-sm text-gray-100 prose prose-sm prose-invert max-w-none leading-relaxed md-content"
          data-markdown
          data-src-id="{{ message.id }}"></div>
+    {% if run_trace %}
+    <div x-data="{ traceOpen: false }" class="mt-2">
+      <button @click="traceOpen = !traceOpen"
+              class="flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-gray-300 transition-colors">
+        <svg :class="traceOpen && 'rotate-90'" class="w-3 h-3 transition-transform flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <span x-text="traceOpen ? 'Hide trace' : 'Show trace'"></span>
+        {% if run_trace.triggered_skills %}
+        <span class="ml-1 px-1.5 py-0 rounded bg-purple-900/50 text-purple-400">{{ run_trace.triggered_skills|length }} skill{{ run_trace.triggered_skills|length|pluralize }}</span>
+        {% endif %}
+        {% if run_trace.loop_trace %}
+        <span class="px-1.5 py-0 rounded bg-gray-800 text-gray-400">{{ run_trace.loop_trace|length }} round{{ run_trace.loop_trace|length|pluralize }}</span>
+        {% endif %}
+      </button>
+      <div x-show="traceOpen" x-cloak class="mt-2">
+        {% include "chat/_tool_progress.html" with
+            tool_executions=run_trace.tool_executions
+            triggered_skills=run_trace.triggered_skills
+            mcp_servers_active=run_trace.mcp_servers_active
+            loop_trace=run_trace.loop_trace
+            finished=True %}
+      </div>
+    </div>
+    {% endif %}
     {% if message.model %}
     <p class="text-[11px] text-gray-500 mt-1.5">{{ message.model }}</p>
     {% endif %}

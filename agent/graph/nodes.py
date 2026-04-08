@@ -1315,6 +1315,7 @@ def save_result(state: AgentState) -> dict:
             conversation_id=state["conversation_id"],
             role=ChatMessage.Role.ASSISTANT,
             content=output,
+            metadata={"run_id": str(state["run_id"])},
         )
 
     run.output = output
