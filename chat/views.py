@@ -248,9 +248,8 @@ class MessageStreamView(View):
                 if "__" not in te.tool_name:
                     continue
                 entry = _mcp_reg.get(te.tool_name) if _mcp_reg else None
-                mcp_from_executions.append(
-                    entry.server_name if entry else te.tool_name.split("__")[0]
-                )
+                if entry:
+                    mcp_from_executions.append(entry.server_name)
             mcp_servers_active = sorted(set(mcp_from_state) | set(mcp_from_executions))
             # Annotate each execution with a clean display name and MCP flag
             for te in tool_executions:
