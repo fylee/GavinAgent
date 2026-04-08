@@ -1,16 +1,14 @@
-﻿---
+---
 name: edwm-wip-movement
-description: EDWM WIP and Movement/Move queries for CT (Taichung) and KH (Kaohsiung) FAB ??table selection, real column names, and prod_move conventions
-triggers: [wip, movement, move, lot_move, wafer_move, step_move, mvmt, fab move, daily move, shift move, taichung move, ct move, ct wip, kh move, kh wip, kaohsiung move, ?唬葉 wip, ?唬葉 movement, ?唬葉 move, 擃? move, 擃? wip, 蝘餃??? ?脣?
+description: EDWM WIP and Movement/Move queries for CT (Taichung) and KH (Kaohsiung) FAB - table selection, real column names, and prod_move conventions
+triggers: [wip, movement, move, lot_move, wafer_move, step_move, mvmt, fab move, daily move, shift move, taichung move, ct move, ct wip, kh move, kh wip, kaohsiung move]
 examples:
-  - "?冽?唬葉撱?WIP movement"
   - "search EDWM for movement yesterday in Taichung FAB"
   - "Taichung CT daily wafer move by lot_type"
-  - "?唬葉撱?亙? lot_type 蝘餃???
   - "CT FAB prod_move yesterday"
   - "sum_step_move_prod yesterday Taichung"
   - "KH FAB movement last 7 days"
-version: 2
+version: 3
 ---
 
 ## EDWM WIP / Movement Queries ??CT (Taichung) & KH (Kaohsiung) FAB
