@@ -628,6 +628,51 @@ class SkillInstallView(View):
         return redirect("agent:skills")
 
 
+class SkillAuthorView(View):
+    """POST /agent/skills/author/ — invoke Claude Code to author a new skill."""
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        task = request.POST.get("task", "").strip()
+        skill_name = request.POST.get("skill_name", "").strip().lower().replace(" ", "-")
+        if not task or not skill_name:
+            return JsonResponse({"status": "error", "output": "task and skill_name are required."}, status=400)
+
+        from agent.skills.author import author_skill
+        result = author_skill(task=task, skill_name=skill_name)
+
+        if request.htmx:
+            status_class = "text-green-400" if result["status"] == "ok" else "text-red-400"
+            updated_msg = f" Embedded: {', '.join(result['updated'])}." if result.get("updated") else ""
+            html = (
+                f'<div class="{status_class} text-sm space-y-2">'
+                f'<p>{result["status"].upper()}{updated_msg}</p>'
+                f'<pre class="text-xs text-gray-400 whitespace-pre-wrap mt-1">{result["output"]}</pre>'
+                f'</div>'
+            )
+            return HttpResponse(html)
+        return JsonResponse(result)
+
+
+class SkillReviewView(View):
+    """POST /agent/skills/<name>/review/ — invoke Claude Code to review an existing skill."""
+
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        from agent.skills.author import review_skill
+        result = review_skill(skill_name=name)
+
+        if request.htmx:
+            status_class = "text-green-400" if result["status"] in ("ok", "updated") else "text-red-400"
+            updated_msg = f" (re-embedded)" if result.get("updated") else ""
+            html = (
+                f'<div id="review-result" class="{status_class} text-sm space-y-2">'
+                f'<p>{result["status"].upper()}{updated_msg}</p>'
+                f'<pre class="text-xs text-gray-400 whitespace-pre-wrap mt-1">{result["output"]}</pre>'
+                f'</div>'
+            )
+            return HttpResponse(html)
+        return JsonResponse(result)
+
+
 class SkillToggleView(View):
     def post(self, request: HttpRequest, name: str) -> HttpResponse:
         skill_db = get_object_or_404(Skill, name=name)

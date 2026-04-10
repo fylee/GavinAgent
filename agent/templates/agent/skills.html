@@ -2,25 +2,70 @@
 {% block title %}Agent Skills{% endblock %}
 
 {% block content %}
-<div class="max-w-3xl mx-auto space-y-6">
+<div class="max-w-3xl mx-auto space-y-6" x-data="{ authorOpen: false }">
 
   <div class="flex items-center justify-between">
     <h1 class="text-xl font-semibold text-white">Skills</h1>
     <div class="flex items-center gap-2">
+      <button @click="authorOpen = true"
+              class="text-xs px-3 py-1.5 rounded-lg border border-purple-700/60 text-purple-300 hover:bg-purple-900/40 transition-colors">
+        ✦ Author with Claude
+      </button>
       <a href="{% url 'agent:skill-create' %}"
          class="text-xs px-3 py-1.5 rounded-lg bg-purple-700 hover:bg-purple-600 text-white transition-colors">
         + New skill
       </a>
-    <form method="post" action="{% url 'agent:skill-install' %}">
-      {% csrf_token %}
-      <button type="submit"
-              hx-post="{% url 'agent:skill-install' %}"
-              hx-target="#install-status"
-              hx-swap="outerHTML"
-              class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
-        Reload skills
-      </button>
-    </form>
+      <form method="post" action="{% url 'agent:skill-install' %}">
+        {% csrf_token %}
+        <button type="submit"
+                hx-post="{% url 'agent:skill-install' %}"
+                hx-target="#install-status"
+                hx-swap="outerHTML"
+                class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
+          Reload skills
+        </button>
+      </form>
+    </div>
+  </div>
+
+  {# Author with Claude modal #}
+  <div x-show="authorOpen" x-cloak
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+       @keydown.escape.window="authorOpen = false">
+    <div class="w-full max-w-lg rounded-xl border border-white/10 p-6 space-y-4 shadow-2xl"
+         style="background-color: #202123;"
+         @click.stop>
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-white">✦ Author skill with Claude Code</h2>
+        <button @click="authorOpen = false" class="text-gray-500 hover:text-white text-lg leading-none">&times;</button>
+      </div>
+      <form hx-post="{% url 'agent:skill-author' %}"
+            hx-target="#author-result"
+            hx-swap="innerHTML"
+            hx-indicator="#author-spinner"
+            class="space-y-3">
+        {% csrf_token %}
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Skill name <span class="text-gray-600">(directory name)</span></label>
+          <input type="text" name="skill_name" placeholder="e.g. edwm-lot-hold"
+                 class="w-full font-mono text-sm text-gray-100 rounded-lg px-3 py-2 border border-white/10 focus:outline-none focus:ring-2 focus:ring-purple-500/40"
+                 style="background-color: #2a2b2d;">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Task description</label>
+          <textarea name="task" rows="5" placeholder="Describe what this skill should help the agent do, what tables/APIs to use, any known column names or conventions..."
+                    class="w-full text-sm text-gray-100 rounded-lg px-3 py-2 border border-white/10 focus:outline-none focus:ring-2 focus:ring-purple-500/40 resize-y"
+                    style="background-color: #2a2b2d;"></textarea>
+        </div>
+        <div class="flex items-center gap-3">
+          <button type="submit"
+                  class="text-sm px-4 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 text-white transition-colors">
+            Author skill
+          </button>
+          <span id="author-spinner" class="htmx-indicator text-xs text-gray-400">Claude is writing… (may take ~60s)</span>
+        </div>
+      </form>
+      <div id="author-result" class="text-sm"></div>
     </div>
   </div>
 

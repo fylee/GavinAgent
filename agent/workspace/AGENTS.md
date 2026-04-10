@@ -13,7 +13,62 @@ Continue working through the available tools until the user's request is fully a
 - **Avoid redundant tool calls.** If a tool returned a success result earlier in this conversation, do not call it again with the same arguments unless the user explicitly asks you to.
 - **When `web_read` fails, try a different URL.** If a site blocks access, pick another URL from your `web_search` results and try that one instead. Do not give up after a single failed fetch — you usually have multiple URLs to try.
 
-## Shell environment
+## Skill Authoring
+
+Skills live in `agent/workspace/skills/<name>/SKILL.md`.
+Each skill is a Markdown file with YAML frontmatter followed by a Markdown body.
+
+### SKILL.md frontmatter schema
+
+```yaml
+---
+name: skill-name          # must match the directory name exactly
+description: one-line summary used for semantic search matching
+triggers: [keyword, phrase, another phrase]   # keyword fallback matching
+examples:
+  - "example user request that should trigger this skill"
+  - "another example"
+version: 1                # increment on each significant update
+---
+```
+
+### Required body sections
+
+Every SKILL.md body must contain these sections in order:
+
+1. **Overview / Key conventions** — bullet list of the most important rules,
+   data types, filters, and gotchas. Be explicit; do not assume the LLM knows.
+
+2. **Standard query patterns** — copy-paste ready code blocks (SQL, API calls,
+   shell commands) verified against live data before writing.
+
+3. **Do NOT use** — explicit list of wrong approaches, wrong column names,
+   wrong table names. This prevents the most common errors.
+
+4. **Search strategy** — numbered steps telling the agent exactly how to start,
+   what tools to call first, and how to avoid scatter-searching.
+
+### Verification rules before writing SQL patterns
+
+- Always run `execute_trino_query` with a `LIMIT 5` or `COUNT(*)` to confirm
+  columns exist and return data before writing them into the skill.
+- Check column types: timestamp columns need `DATE()` cast in WHERE clauses.
+- Confirm filter values (e.g. `lot_type IN ('P','PE')` not `'PROD'`) from real data.
+
+### Naming conventions
+
+- Directory name: `kebab-case`, e.g. `edwm-wip-movement`, `stock-chart`
+- `name` in frontmatter must match the directory name exactly
+- Version starts at `1`; increment when SQL patterns or conventions change significantly
+
+### Encoding
+
+- SKILL.md must be saved as **UTF-8 without BOM**
+- Do NOT include Chinese or other multi-byte characters in the YAML frontmatter
+  `triggers` or `examples` lists — YAML flow sequences break on non-ASCII
+- Chinese text is safe in the Markdown body only
+
+
 
 - OS: **Windows**
 - Shell: **PowerShell** (not bash, not cmd.exe)

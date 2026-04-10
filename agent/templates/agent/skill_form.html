@@ -71,6 +71,24 @@ examples:
 version: 1
 ---</pre>
   </div>
+
+  <div class="rounded-lg border border-purple-900/40 p-4 space-y-3" style="background-color: #202123;">
+    <div class="flex items-center justify-between">
+      <p class="text-xs font-semibold text-purple-300">✦ Review with Claude Code</p>
+      <span id="review-spinner" class="htmx-indicator text-xs text-gray-400">Claude is reviewing… (may take ~60s)</span>
+    </div>
+    <p class="text-xs text-gray-500">Ask Claude Code to verify SQL, check column names, test examples, and suggest improvements.</p>
+    <button hx-post="{% url 'agent:skill-review' name=name %}"
+            hx-target="#review-result"
+            hx-swap="innerHTML"
+            hx-indicator="#review-spinner"
+            hx-include="[name='content']"
+            class="text-xs px-3 py-1.5 rounded-lg border border-purple-700/60 text-purple-300 hover:bg-purple-900/40 transition-colors">
+      Review skill
+    </button>
+    {% csrf_token %}
+    <div id="review-result" class="text-sm"></div>
+  </div>
   {% endif %}
 
 </div>
