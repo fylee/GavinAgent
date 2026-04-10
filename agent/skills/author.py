@@ -158,7 +158,7 @@ def author_skill(task: str, skill_name: str) -> dict:
     logger.info("author_skill using cmd: %s", cmd)
     try:
         result = subprocess.run(
-            cmd + ["--print", "--no-conversation"],
+            cmd + ["--print", "--no-session-persistence"],
             input=prompt,
             capture_output=True,
             text=True,
@@ -215,7 +215,7 @@ def review_skill(skill_name: str) -> dict:
     logger.info("review_skill using cmd: %s", cmd)
     try:
         result = subprocess.run(
-            cmd + ["--print", "--no-conversation"],
+            cmd + ["--print", "--no-session-persistence"],
             input=prompt,
             capture_output=True,
             text=True,
