@@ -158,18 +158,17 @@ def author_skill(task: str, skill_name: str) -> dict:
     logger.info("author_skill using cmd: %s", cmd)
     try:
         result = subprocess.run(
-            cmd + ["--print", "--no-session-persistence"],
-            input=prompt,
+            cmd + ["--print", "--no-session-persistence", "-p", prompt],
             capture_output=True,
             text=True,
             timeout=180,
             cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),  # repo root
         )
-        output = result.stdout.strip()
-        stderr = result.stderr.strip()
+        output = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
         if result.returncode != 0:
             logger.error("Claude author_skill failed (rc=%d): %s", result.returncode, stderr)
-            return {"status": "error", "output": stderr or output, "updated": []}
+            return {"status": "error", "output": stderr or output or f"exit code {result.returncode}", "updated": []}
 
         updated = _reload_and_embed(skills_dir)
         logger.info("author_skill %s: updated=%s", skill_name, updated)
@@ -215,17 +214,16 @@ def review_skill(skill_name: str) -> dict:
     logger.info("review_skill using cmd: %s", cmd)
     try:
         result = subprocess.run(
-            cmd + ["--print", "--no-session-persistence"],
-            input=prompt,
+            cmd + ["--print", "--no-session-persistence", "-p", prompt],
             capture_output=True,
             text=True,
             timeout=180,
             cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
         )
-        output = result.stdout.strip()
-        stderr = result.stderr.strip()
+        output = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
         if result.returncode != 0:
-            return {"status": "error", "output": stderr or output, "updated": []}
+            return {"status": "error", "output": stderr or output or f"exit code {result.returncode}", "updated": []}
 
         updated = _reload_and_embed(skills_dir)
         status = "updated" if updated else "ok"
