@@ -38,7 +38,7 @@ def _annotate_tool_executions(tool_executions) -> list:
       - is_serial:         already on the model, True for file_write / shell_exec
     Returns a plain list (materialises the queryset).
     """
-    from collections import Counter, defaultdict
+    from collections import Counter
     tes = list(tool_executions)
     # Count per group
     group_counts: Counter = Counter(te.parallel_group for te in tes if te.parallel_group)
@@ -54,7 +54,84 @@ def _annotate_tool_executions(tool_executions) -> list:
             te.group_size = 1
             te.is_parallel_group = False
             te.is_first_in_group = True
+        # Resource type classification
+        if "__" in te.tool_name:
+            te.tool_type = "mcp"
+            parts = te.tool_name.split("__", 1)
+            te.mcp_server = parts[0].replace("_", " ")
+            te.display_name = parts[1] if len(parts) > 1 else te.tool_name
+        elif te.tool_name == "run_skill":
+            te.tool_type = "skill"
+            te.mcp_server = ""
+            te.display_name = te.input.get("skill_name", "run_skill") if isinstance(te.input, dict) else te.tool_name
+        else:
+            te.tool_type = "builtin"
+            te.mcp_server = ""
+            te.display_name = te.tool_name
     return tes
+
+
+def _compute_agent_phase(run, gs: dict) -> str:
+    """Derive a descriptive phase label from the run's current state."""
+    if run.status == "completed":
+        return "completed"
+    if run.status == "failed":
+        return "failed"
+    if run.status == "waiting" or gs.get("waiting_for_approval"):
+        return "waiting_approval"
+    if run.status == "pending":
+        return "pending"
+    # status == running — determine sub-phase from graph_state
+    loop_trace = gs.get("loop_trace", [])
+    if not loop_trace:
+        return "assembling"
+    last_entry = loop_trace[-1]
+    if last_entry.get("decision") == "answer":
+        return "concluding"
+    # Check if any tool executions are currently running
+    if run.tool_executions.filter(status="running").exists():
+        return "executing"
+    return "thinking"
+
+
+def _build_run_context(run, request=None) -> dict:
+    """Build the shared template context dict for run status views."""
+    from django.conf import settings as _settings
+    tool_executions = _annotate_tool_executions(run.tool_executions.order_by("created_at"))
+    gs = run.graph_state or {}
+    loop_trace = gs.get("loop_trace", [])
+
+    # Group tool_executions by round for the unified timeline
+    te_by_round: dict = {}
+    for te in tool_executions:
+        r = te.round or 0
+        te_by_round.setdefault(r, []).append(te)
+
+    # Embed tool executions inside each loop_trace entry
+    loop_trace_with_tes = []
+    for entry in loop_trace:
+        round_num = entry.get("round", 0)
+        loop_trace_with_tes.append({**entry, "tool_executions": te_by_round.get(round_num, [])})
+
+    max_rounds = getattr(_settings, "AGENT_MAX_TOOL_CALL_ROUNDS", 20)
+    max_consec = getattr(_settings, "AGENT_MAX_CONSECUTIVE_FAILED_ROUNDS", 2)
+
+    return {
+        "run": run,
+        "tool_executions": tool_executions,
+        "skill_bodies": _load_skill_bodies(run.triggered_skills or []),
+        "rag_matches": gs.get("rag_matches", []),
+        "loop_trace": loop_trace_with_tes,
+        "context_trace": gs.get("context_trace", {}),
+        "agent_phase": _compute_agent_phase(run, gs),
+        "max_tool_call_rounds": max_rounds,
+        "max_consecutive_failed_rounds": max_consec,
+        "tool_call_rounds": gs.get("tool_call_rounds", 0),
+        "consecutive_failed_rounds": gs.get("consecutive_failed_rounds", 0),
+        "near_round_limit": gs.get("tool_call_rounds", 0) >= int(max_rounds * 0.75),
+        "blocked_mcp_servers": gs.get("blocked_mcp_servers", []),
+        "mcp_servers_active": gs.get("mcp_servers_active", []),
+    }
 
 from django import forms
 from django.conf import settings
@@ -172,32 +249,16 @@ class RunDetailView(View):
 
     def get(self, request: HttpRequest, pk) -> HttpResponse:
         run = get_object_or_404(AgentRun.objects.select_related("agent"), pk=pk)
-        tool_executions = _annotate_tool_executions(run.tool_executions.order_by("created_at"))
-        gs = run.graph_state or {}
-        ctx = {
-            "run": run,
-            "tool_executions": tool_executions,
-            "skill_bodies": _load_skill_bodies(run.triggered_skills or []),
-            "rag_matches": gs.get("rag_matches", []),
-            "loop_trace": gs.get("loop_trace", []),
-        }
+        ctx = _build_run_context(run, request)
         return render(request, self.template_name, ctx)
 
 
 class RunStatusView(View):
     def get(self, request: HttpRequest, pk) -> HttpResponse:
         run = get_object_or_404(AgentRun, pk=pk)
-        tool_executions = _annotate_tool_executions(run.tool_executions.order_by("created_at"))
-        gs = run.graph_state or {}
         html = render_to_string(
             "agent/_run_status.html",
-            {
-                "run": run,
-                "tool_executions": tool_executions,
-                "skill_bodies": _load_skill_bodies(run.triggered_skills or []),
-                "rag_matches": gs.get("rag_matches", []),
-                "loop_trace": gs.get("loop_trace", []),
-            },
+            _build_run_context(run, request),
             request=request,
         )
         return HttpResponse(html)
@@ -583,6 +644,109 @@ class SkillToggleView(View):
                 {"entry": entry, "db": skill_db},
             )
         return redirect("agent:skills")
+
+
+class SkillEditView(View):
+    """GET /agent/skills/<name>/edit/ — show SKILL.md editor.
+    POST — save content, reload registry, re-embed."""
+
+    def _skill_dir(self, name: str) -> Path:
+        return Path(settings.AGENT_WORKSPACE_DIR) / "skills" / name
+
+    def get(self, request: HttpRequest, name: str) -> HttpResponse:
+        skill_dir = self._skill_dir(name)
+        skill_md = skill_dir / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8") if skill_md.exists() else ""
+        from agent.skills import registry
+        entry = registry.get(name)
+        db = Skill.objects.filter(name=name).first()
+        return render(request, "agent/skill_form.html", {
+            "name": name,
+            "content": content,
+            "entry": entry,
+            "db": db,
+            "is_new": False,
+        })
+
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        content = request.POST.get("content", "")
+        skill_dir = self._skill_dir(name)
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_md = skill_dir / "SKILL.md"
+        skill_md.write_text(content, encoding="utf-8")
+        # Reload registry + re-embed
+        from agent.skills.loader import SkillLoader
+        from agent.skills import registry as skill_registry
+        from agent.skills.embeddings import embed_all_skills
+        loader = SkillLoader(Path(settings.AGENT_WORKSPACE_DIR) / "skills")
+        loader.load_all(skill_registry)
+        embed_all_skills()
+        # Sync DB
+        entry = skill_registry.get(name)
+        if entry:
+            Skill.objects.update_or_create(
+                name=name,
+                defaults={"description": entry.description, "path": entry.path, "enabled": True},
+            )
+        return redirect("agent:skill-edit", name=name)
+
+
+class SkillCreateView(View):
+    """GET — blank skill form. POST — create directory + SKILL.md, load, redirect to edit."""
+
+    _TEMPLATE = """\
+---
+name: {name}
+description: 
+triggers: []
+examples: []
+version: 1
+---
+
+## Overview
+
+Describe the skill purpose here.
+
+### Key conventions
+
+1. Convention one.
+
+### Standard patterns
+
+```
+# example pattern
+```
+
+### Do NOT use
+
+- Item one.
+
+### Search strategy
+
+1. Step one.
+"""
+
+    def get(self, request: HttpRequest) -> HttpResponse:
+        return render(request, "agent/skill_form.html", {"is_new": True, "content": "", "name": ""})
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        name = request.POST.get("name", "").strip().lower().replace(" ", "-")
+        if not name:
+            return render(request, "agent/skill_form.html", {
+                "is_new": True, "content": "", "name": "",
+                "error": "Skill name is required.",
+            })
+        skill_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills" / name
+        if skill_dir.exists():
+            return redirect("agent:skill-edit", name=name)
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(self._TEMPLATE.format(name=name), encoding="utf-8")
+        # Load into registry
+        from agent.skills.loader import SkillLoader
+        from agent.skills import registry as skill_registry
+        loader = SkillLoader(Path(settings.AGENT_WORKSPACE_DIR) / "skills")
+        loader.load_all(skill_registry)
+        return redirect("agent:skill-edit", name=name)
 
 
 class SkillDeleteView(View):

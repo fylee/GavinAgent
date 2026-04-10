@@ -6,6 +6,11 @@
 
   <div class="flex items-center justify-between">
     <h1 class="text-xl font-semibold text-white">Skills</h1>
+    <div class="flex items-center gap-2">
+      <a href="{% url 'agent:skill-create' %}"
+         class="text-xs px-3 py-1.5 rounded-lg bg-purple-700 hover:bg-purple-600 text-white transition-colors">
+        + New skill
+      </a>
     <form method="post" action="{% url 'agent:skill-install' %}">
       {% csrf_token %}
       <button type="submit"
@@ -16,6 +21,7 @@
         Reload skills
       </button>
     </form>
+    </div>
   </div>
 
   <div id="install-status"></div>

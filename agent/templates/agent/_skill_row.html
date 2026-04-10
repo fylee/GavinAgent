@@ -56,6 +56,8 @@
               class="text-xs text-gray-400 hover:text-white transition-colors"
               x-text="expanded ? 'Hide' : 'Instructions'"></button>
       {% endif %}
+      <a href="{% url 'agent:skill-edit' name=entry.name %}"
+         class="text-xs text-gray-400 hover:text-white transition-colors">Edit</a>
       <a href="{% url 'agent:skill-delete' name=entry.name %}"
          class="text-xs text-red-400 hover:text-red-300 transition-colors">Delete</a>
     </div>
