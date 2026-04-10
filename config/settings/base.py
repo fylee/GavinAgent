@@ -128,6 +128,13 @@ AGENT_WORKSPACE_DIR = config(
     "AGENT_WORKSPACE_DIR", default=str(BASE_DIR / "agent" / "workspace")
 )
 
+# Path to the Claude Code CLI executable (used by agent/skills/author.py).
+# On Windows, npm installs 'claude' as a .cmd shim which Python subprocess can't
+# find by bare name.  Set this to the full path of claude.cmd, e.g.:
+#   CLAUDE_CMD=C:\Users\fylee\AppData\Roaming\npm\claude.cmd
+# If unset, author.py auto-detects via `npm prefix -g` at runtime.
+CLAUDE_CMD = config("CLAUDE_CMD", default="")
+
 # Agent timezone — configured once above as TIME_ZONE (also consumed by Django's |localtime).
 AGENT_TIMEZONE = TIME_ZONE
 

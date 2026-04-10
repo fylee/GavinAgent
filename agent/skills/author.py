@@ -7,12 +7,45 @@ the SKILL.md file.  After completion, reloads the registry and re-embeds.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _claude_cmd() -> list[str]:
+    """
+    Return the command list to invoke Claude Code.
+
+    On Windows, the npm-installed 'claude' shim is a .cmd file that Python's
+    subprocess can't find via bare 'claude'.  We try (in order):
+      1. settings.CLAUDE_CMD / CLAUDE_CMD env var (explicit override)
+      2. claude.cmd in npm global prefix (auto-detected once via 'npm prefix -g')
+      3. Plain 'claude' (works on Linux/macOS or if added to PATH as .exe)
+    """
+    # 1. Explicit override from settings/env
+    override = getattr(settings, "CLAUDE_CMD", "") or os.environ.get("CLAUDE_CMD", "")
+    if override:
+        return [override] if not override.endswith(".cmd") else ["cmd", "/c", override]
+
+    # 2. Auto-detect npm global bin on Windows
+    try:
+        npm_result = subprocess.run(
+            ["cmd", "/c", "npm", "prefix", "-g"],
+            capture_output=True, text=True, timeout=10,
+        )
+        npm_prefix = npm_result.stdout.strip()
+        if npm_prefix:
+            candidate = Path(npm_prefix) / "claude.cmd"
+            if candidate.exists():
+                return ["cmd", "/c", str(candidate)]
+    except Exception:
+        pass
+
+    return ["claude"]
 
 _AUTHOR_PROMPT = """\
 You are a skill author for GavinAgent, an AI agent platform built with Django and LangGraph.
@@ -121,9 +154,11 @@ def author_skill(task: str, skill_name: str) -> dict:
         existing_skills=_list_existing_skills(),
     )
 
+    cmd = _claude_cmd()
+    logger.info("author_skill using cmd: %s", cmd)
     try:
         result = subprocess.run(
-            ["claude", "--print", "--no-conversation"],
+            cmd + ["--print", "--no-conversation"],
             input=prompt,
             capture_output=True,
             text=True,
@@ -143,7 +178,11 @@ def author_skill(task: str, skill_name: str) -> dict:
     except FileNotFoundError:
         return {
             "status": "error",
-            "output": "claude CLI not found. Install Claude Code: https://docs.anthropic.com/claude-code",
+            "output": (
+                f"Claude CLI not found (tried: {cmd}). "
+                "Install Claude Code: https://docs.anthropic.com/claude-code "
+                "or set CLAUDE_CMD env var to the full path of claude.cmd."
+            ),
             "updated": [],
         }
     except subprocess.TimeoutExpired:
@@ -172,9 +211,11 @@ def review_skill(skill_name: str) -> dict:
         agents_md=_read_agents_md(),
     )
 
+    cmd = _claude_cmd()
+    logger.info("review_skill using cmd: %s", cmd)
     try:
         result = subprocess.run(
-            ["claude", "--print", "--no-conversation"],
+            cmd + ["--print", "--no-conversation"],
             input=prompt,
             capture_output=True,
             text=True,
@@ -193,7 +234,11 @@ def review_skill(skill_name: str) -> dict:
     except FileNotFoundError:
         return {
             "status": "error",
-            "output": "claude CLI not found. Install Claude Code: https://docs.anthropic.com/claude-code",
+            "output": (
+                f"Claude CLI not found (tried: {cmd}). "
+                "Install Claude Code: https://docs.anthropic.com/claude-code "
+                "or set CLAUDE_CMD env var to the full path of claude.cmd."
+            ),
             "updated": [],
         }
     except subprocess.TimeoutExpired:
