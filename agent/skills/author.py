@@ -89,6 +89,13 @@ Start writing now.
 _REVIEW_SUGGEST_PROMPT = """\
 You are a skill reviewer for GavinAgent. Review ONE specific skill and output a corrected version.
 Do NOT ask clarifying questions. Do NOT end with "Would you like me to...". Just do it.
+Your reply must contain exactly two sections:
+
+=== Recommand ===
+<list the issues found in the original skill with specific recommendations to fix each one>
+
+=== Suggest Version ===
+<the complete revised SKILL.md content, no fenced code block, no annotations, no comments>
 
 ## Skill to review
 
@@ -96,9 +103,7 @@ Skill name: {skill_name}
 File path: {skill_path}
 
 Current SKILL.md content:
-```
 {current_content}
-```
 
 ## Conventions (from AGENTS.md)
 
@@ -112,23 +117,7 @@ Current SKILL.md content:
 4. Search strategy: specific enough for the agent to use without scatter-searching?
 5. Examples: do the trigger examples match real user requests?
 
-## Output format — follow this EXACTLY, no deviation
-
-### Issues found
-List each problem as a bullet. If none, write "No issues found."
-
-### Suggested SKILL.md
-Output the complete corrected SKILL.md in a fenced code block.
-- Fix ALL the issues listed above directly in the file.
-- Do NOT add explanatory comments inside the SKILL.md content itself.
-- Keep the file concise — no inline annotations, no "(was: ...)" notes, no "# Changed" markers.
-- If there are no issues, output the original content unchanged.
-
-```
-<complete corrected SKILL.md here>
-```
-
-Stop after the code block. Do not add anything after it.
+Output the two sections now. Nothing before === Recommand === and nothing after the suggested version content.
 """
 
 _REVIEW_PROMPT = """\
@@ -371,11 +360,24 @@ def review_skill_suggest(skill_name: str) -> dict:
         if result.returncode != 0:
             return {"status": "error", "output": stderr or output or f"exit code {result.returncode}", "suggested_content": None}
 
-        # Extract the last fenced code block as the suggested SKILL.md
-        blocks = re.findall(r"```(?:markdown|md|yaml|)?\n([\s\S]*?)```", output)
-        suggested_content = blocks[-1].strip() if blocks else None
+        # Extract === Recommand === and === Suggest Version === sections
+        recommand_match = re.search(
+            r"===\s*Recommand\s*===\s*\n([\s\S]*?)(?===\s*Suggest Version\s*===|\Z)",
+            output, re.IGNORECASE
+        )
+        suggest_match = re.search(
+            r"===\s*Suggest Version\s*===\s*\n([\s\S]*?)\Z",
+            output, re.IGNORECASE
+        )
+        issues = recommand_match.group(1).strip() if recommand_match else output
+        suggested_content = suggest_match.group(1).strip() if suggest_match else None
+        # Strip any accidental fenced code block wrapper
+        if suggested_content:
+            fenced = re.match(r"^```(?:\w+)?\n([\s\S]*?)```$", suggested_content)
+            if fenced:
+                suggested_content = fenced.group(1).strip()
 
-        return {"status": "ok", "output": output, "suggested_content": suggested_content}
+        return {"status": "ok", "output": output, "issues": issues, "suggested_content": suggested_content}
 
     except FileNotFoundError:
         return {
