@@ -49,6 +49,7 @@ def _claude_cmd() -> list[str]:
 
 _AUTHOR_PROMPT = """\
 You are a skill author for GavinAgent, an AI agent platform built with Django and LangGraph.
+Do NOT ask clarifying questions. Write the skill file immediately based on the task below.
 
 ## Your task
 
@@ -56,39 +57,41 @@ You are a skill author for GavinAgent, an AI agent platform built with Django an
 
 ## Skill to write
 
-Write a SKILL.md file at this exact path:
+Write a SKILL.md file at this EXACT path (create it now):
 {skill_path}
 
 ## Conventions (from AGENTS.md)
 
 {agents_md}
 
-## Existing skills (for context)
+## Existing skills (for context — do not duplicate)
 
 {existing_skills}
 
 ## Instructions
 
 1. Read the conventions above carefully.
-2. If this is a data skill (SQL/API), derive the correct column names, filter values,
+2. If this is a data skill (SQL/API), derive correct column names, filter values,
    and query patterns from the task description and your knowledge.
-3. Write the SKILL.md file directly to the path specified above.
+3. Write the complete SKILL.md to {skill_path} right now.
 4. Follow the YAML frontmatter schema exactly.
 5. Do NOT put Chinese or non-ASCII text in the YAML frontmatter triggers/examples lists.
 6. Save the file as UTF-8 without BOM.
-7. When done, output a single line: SKILL_WRITTEN: <skill_name>
+7. Output a single line when done: SKILL_WRITTEN: <skill_name>
+
+Start writing now.
 """
 
 _REVIEW_PROMPT = """\
-You are a skill reviewer for GavinAgent, an AI agent platform built with Django and LangGraph.
+You are a skill reviewer for GavinAgent. Your job is to review ONE specific skill RIGHT NOW.
+Do NOT ask clarifying questions. Do NOT list other skills. Act immediately.
 
-## Your task
+## Skill to review
 
-Review and improve the following SKILL.md file.
+Skill name: {skill_name}
+File path: {skill_path}
 
-Skill path: {skill_path}
-
-Current content:
+Current SKILL.md content:
 ```
 {current_content}
 ```
@@ -99,19 +102,23 @@ Current content:
 
 ## Review checklist
 
-1. Are the SQL/API patterns correct and verified?
-2. Are column names, filter values, and data types accurate?
-3. Is there a "Do NOT use" section listing known wrong approaches?
-4. Is the search strategy clear and specific (no scatter-searching)?
-5. Is the YAML frontmatter valid? (no non-ASCII in flow sequences)
-6. Is the version number appropriate?
+1. YAML frontmatter: valid schema, no non-ASCII in flow sequences, version is an integer
+2. SQL/API patterns: are column names, table names, filter values correct and specific?
+3. Missing guards: is there a "Do NOT use" or "WARNING" section for known wrong approaches?
+4. Search strategy: is it specific enough for the agent to use without scatter-searching?
+5. Examples: do the trigger examples match real user requests?
 
 ## Instructions
 
-- If improvements are needed, rewrite the file at the same path with fixes.
-- If the file is already correct, output: SKILL_OK: <skill_name>
-- If you rewrote it, output: SKILL_UPDATED: <skill_name>
-- Always explain your changes (or lack thereof) in 2-3 sentences after the status line.
+1. Review the SKILL.md content above against the checklist.
+2. If improvements are needed, overwrite the file at exactly: {skill_path}
+   Write the complete improved SKILL.md to that path.
+3. Output your result on a SINGLE line at the end:
+   - If you rewrote the file: SKILL_UPDATED: {skill_name}
+   - If no changes needed: SKILL_OK: {skill_name}
+4. After the status line, write 2-4 sentences summarising what you changed or confirmed.
+
+Start reviewing now.
 """
 
 
@@ -205,6 +212,7 @@ def review_skill(skill_name: str) -> dict:
     current_content = skill_path.read_text(encoding="utf-8")
 
     prompt = _REVIEW_PROMPT.format(
+        skill_name=skill_name,
         skill_path=str(skill_path),
         current_content=current_content,
         agents_md=_read_agents_md(),
