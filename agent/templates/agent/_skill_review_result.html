@@ -1,4 +1,3 @@
-{% load i18n %}
 {% if status == "error" %}
 <div class="text-red-400 text-sm">
   <pre class="text-xs whitespace-pre-wrap">{{ output }}</pre>
@@ -6,16 +5,17 @@
 {% else %}
 <div class="space-y-4 text-sm">
 
-  {# Claude's analysis #}
-  <div class="text-gray-300">
-    <pre class="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">{{ output }}</pre>
+  {# Issues section #}
+  <div class="rounded-lg border border-white/10 p-3 space-y-1" style="background-color: #161618;">
+    <p class="text-xs font-semibold text-gray-400 mb-2">Issues found</p>
+    <pre class="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">{{ issues }}</pre>
   </div>
 
   {% if suggested_content %}
   {# Editable suggested SKILL.md + Apply button #}
-  <div class="space-y-2 border-t border-white/10 pt-4">
+  <div class="space-y-2">
     <p class="text-xs font-semibold text-purple-300">✦ Suggested SKILL.md — edit if needed, then apply</p>
-    <textarea id="suggested-content" name="suggested-content" rows="28"
+    <textarea id="suggested-content" name="suggested-content" rows="30"
               class="w-full font-mono text-xs text-gray-100 rounded-lg px-3 py-2 border border-white/10 focus:outline-none focus:ring-2 focus:ring-purple-500/40 resize-y"
               style="background-color: #161618;">{{ suggested_content }}</textarea>
     <div class="flex items-center gap-3">
@@ -25,9 +25,9 @@
               hx-swap="innerHTML"
               hx-indicator="#review-spinner"
               class="text-xs px-3 py-1.5 rounded-lg bg-purple-700 hover:bg-purple-600 text-white transition-colors">
-        ✓ Apply suggested changes
+        ✓ Apply
       </button>
-      <span class="text-xs text-gray-500">This will overwrite SKILL.md and re-embed.</span>
+      <span class="text-xs text-gray-500">Overwrites SKILL.md and re-embeds.</span>
     </div>
   </div>
   {% endif %}

@@ -83,8 +83,8 @@ Start writing now.
 """
 
 _REVIEW_SUGGEST_PROMPT = """\
-You are a skill reviewer for GavinAgent. Review ONE specific skill and suggest improvements.
-Do NOT ask clarifying questions. Do NOT write to any file. Just analyse and respond.
+You are a skill reviewer for GavinAgent. Review ONE specific skill and output a corrected version.
+Do NOT ask clarifying questions. Do NOT end with "Would you like me to...". Just do it.
 
 ## Skill to review
 
@@ -108,21 +108,23 @@ Current SKILL.md content:
 4. Search strategy: specific enough for the agent to use without scatter-searching?
 5. Examples: do the trigger examples match real user requests?
 
-## Output format
-
-Respond with these three sections, in order:
+## Output format — follow this EXACTLY, no deviation
 
 ### Issues found
 List each problem as a bullet. If none, write "No issues found."
 
-### Suggested improvements
-Explain what should change and why (2-5 sentences).
-
 ### Suggested SKILL.md
-Output the complete improved SKILL.md inside a fenced code block (``` ... ```).
-If no changes are needed, output the original content unchanged.
+Output the complete corrected SKILL.md in a fenced code block.
+- Fix ALL the issues listed above directly in the file.
+- Do NOT add explanatory comments inside the SKILL.md content itself.
+- Keep the file concise — no inline annotations, no "(was: ...)" notes, no "# Changed" markers.
+- If there are no issues, output the original content unchanged.
 
-Start reviewing now.
+```
+<complete corrected SKILL.md here>
+```
+
+Stop after the code block. Do not add anything after it.
 """
 
 _REVIEW_PROMPT = """\

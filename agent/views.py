@@ -663,10 +663,26 @@ class SkillReviewSuggestView(View):
         result = review_skill_suggest(skill_name=name)
 
         if request.htmx:
+            if result["status"] == "error":
+                return render(request, "agent/_skill_review_result.html", {
+                    "status": "error",
+                    "output": result["output"],
+                })
+
+            output = result["output"]
+            suggested = result.get("suggested_content") or ""
+
+            # Extract the "Issues found" section from the output
+            import re
+            issues_match = re.search(
+                r"###\s*Issues found\s*\n([\s\S]*?)(?=###|\Z)", output, re.IGNORECASE
+            )
+            issues = issues_match.group(1).strip() if issues_match else output
+
             return render(request, "agent/_skill_review_result.html", {
-                "status": result["status"],
-                "output": result["output"],
-                "suggested_content": result.get("suggested_content") or "",
+                "status": "ok",
+                "issues": issues,
+                "suggested_content": suggested,
                 "skill_name": name,
             })
         return JsonResponse(result)
