@@ -35,7 +35,7 @@ def _claude_cmd() -> list[str]:
     try:
         npm_result = subprocess.run(
             ["cmd", "/c", "npm", "prefix", "-g"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, encoding="utf-8", timeout=10,
         )
         npm_prefix = npm_result.stdout.strip()
         if npm_prefix:
@@ -210,7 +210,7 @@ def author_skill(task: str, skill_name: str) -> dict:
         result = subprocess.run(
             cmd + ["--print", "--no-session-persistence", "-p", prompt],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=180,
             cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),  # repo root
         )
@@ -267,7 +267,7 @@ def review_skill(skill_name: str) -> dict:
         result = subprocess.run(
             cmd + ["--print", "--no-session-persistence", "-p", prompt],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=180,
             cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
         )
@@ -326,7 +326,7 @@ def review_skill_suggest(skill_name: str) -> dict:
         result = subprocess.run(
             cmd + ["--print", "--no-session-persistence", "-p", prompt],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=180,
             cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
         )
