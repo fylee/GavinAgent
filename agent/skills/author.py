@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -16,36 +17,39 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
-def _claude_cmd() -> list[str]:
+def _claude_cmd() -> tuple[list[str], bool]:
     """
-    Return the command list to invoke Claude Code.
+    Return (cmd, use_stdin) for invoking Claude Code.
 
-    On Windows, the npm-installed 'claude' shim is a .cmd file that Python's
-    subprocess can't find via bare 'claude'.  We try (in order):
-      1. settings.CLAUDE_CMD / CLAUDE_CMD env var (explicit override)
-      2. claude.cmd in npm global prefix (auto-detected once via 'npm prefix -g')
-      3. Plain 'claude' (works on Linux/macOS or if added to PATH as .exe)
+    Windows problem: cmd.exe has an 8191-char command-line limit, so passing a
+    long prompt via -p "..." gets silently truncated.  Instead we invoke the
+    Node.js entry-point directly and pipe the prompt through stdin, which has
+    no size limit.
+
+    Returns:
+        cmd        — the base command list (without --print / -p flags)
+        use_stdin  — True means send prompt via stdin with --print flag,
+                     False means append as -p argument (legacy / Linux path)
     """
-    # 1. Explicit override from settings/env
+    # 1. Explicit override
     override = getattr(settings, "CLAUDE_CMD", "") or os.environ.get("CLAUDE_CMD", "")
+
+    # 2. Try node + cli.js directly (bypasses cmd /c and length limit)
+    node_exe = shutil.which("node") or r"C:\Program Files\nodejs\node.exe"
+    npm_appdata = os.environ.get("APPDATA", "")
+    cli_js = Path(npm_appdata) / "npm" / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+    if Path(node_exe).exists() and cli_js.exists() and not override:
+        return [node_exe, str(cli_js)], True
+
+    # 3. Explicit override path
     if override:
-        return [override] if not override.endswith(".cmd") else ["cmd", "/c", override]
+        if override.endswith(".cmd"):
+            # cmd /c can't forward stdin — fall back to -p arg (may truncate for very long prompts)
+            return ["cmd", "/c", override], False
+        return [override], True
 
-    # 2. Auto-detect npm global bin on Windows
-    try:
-        npm_result = subprocess.run(
-            ["cmd", "/c", "npm", "prefix", "-g"],
-            capture_output=True, encoding="utf-8", timeout=10,
-        )
-        npm_prefix = npm_result.stdout.strip()
-        if npm_prefix:
-            candidate = Path(npm_prefix) / "claude.cmd"
-            if candidate.exists():
-                return ["cmd", "/c", str(candidate)]
-    except Exception:
-        pass
-
-    return ["claude"]
+    # 4. Bare 'claude' (Linux/macOS or if on PATH as executable)
+    return ["claude"], True
 
 _AUTHOR_PROMPT = """\
 You are a skill author for GavinAgent, an AI agent platform built with Django and LangGraph.
@@ -206,16 +210,26 @@ def author_skill(task: str, skill_name: str) -> dict:
         existing_skills=_list_existing_skills(),
     )
 
-    cmd = _claude_cmd()
-    logger.info("author_skill using cmd: %s", cmd)
+    cmd, use_stdin = _claude_cmd()
+    logger.info("author_skill using cmd: %s (stdin=%s)", cmd, use_stdin)
     try:
-        result = subprocess.run(
-            cmd + ["--print", "--no-session-persistence", "-p", prompt],
-            capture_output=True,
-            encoding="utf-8",
-            timeout=180,
-            cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),  # repo root
-        )
+        if use_stdin:
+            result = subprocess.run(
+                cmd + ["--print", "--no-session-persistence"],
+                input=prompt,
+                capture_output=True,
+                encoding="utf-8",
+                timeout=180,
+                cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
+            )
+        else:
+            result = subprocess.run(
+                cmd + ["--print", "--no-session-persistence", "-p", prompt],
+                capture_output=True,
+                encoding="utf-8",
+                timeout=180,
+                cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
+            )
         output = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         if result.returncode != 0:
@@ -263,16 +277,26 @@ def review_skill(skill_name: str) -> dict:
         agents_md=_read_agents_md(),
     )
 
-    cmd = _claude_cmd()
-    logger.info("review_skill using cmd: %s", cmd)
+    cmd, use_stdin = _claude_cmd()
+    logger.info("review_skill using cmd: %s (stdin=%s)", cmd, use_stdin)
     try:
-        result = subprocess.run(
-            cmd + ["--print", "--no-session-persistence", "-p", prompt],
-            capture_output=True,
-            encoding="utf-8",
-            timeout=180,
-            cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
-        )
+        if use_stdin:
+            result = subprocess.run(
+                cmd + ["--print", "--no-session-persistence"],
+                input=prompt,
+                capture_output=True,
+                encoding="utf-8",
+                timeout=180,
+                cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
+            )
+        else:
+            result = subprocess.run(
+                cmd + ["--print", "--no-session-persistence", "-p", prompt],
+                capture_output=True,
+                encoding="utf-8",
+                timeout=180,
+                cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
+            )
         output = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         if result.returncode != 0:
@@ -322,16 +346,26 @@ def review_skill_suggest(skill_name: str) -> dict:
         agents_md=_read_agents_md(),
     )
 
-    cmd = _claude_cmd()
-    logger.info("review_skill_suggest using cmd: %s", cmd)
+    cmd, use_stdin = _claude_cmd()
+    logger.info("review_skill_suggest using cmd: %s (stdin=%s)", cmd, use_stdin)
     try:
-        result = subprocess.run(
-            cmd + ["--print", "--no-session-persistence", "-p", prompt],
-            capture_output=True,
-            encoding="utf-8",
-            timeout=180,
-            cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
-        )
+        if use_stdin:
+            result = subprocess.run(
+                cmd + ["--print", "--no-session-persistence"],
+                input=prompt,
+                capture_output=True,
+                encoding="utf-8",
+                timeout=180,
+                cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
+            )
+        else:
+            result = subprocess.run(
+                cmd + ["--print", "--no-session-persistence", "-p", prompt],
+                capture_output=True,
+                encoding="utf-8",
+                timeout=180,
+                cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
+            )
         output = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         if result.returncode != 0:
