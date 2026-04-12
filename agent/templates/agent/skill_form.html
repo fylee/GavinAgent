@@ -78,16 +78,13 @@ version: 1
       <span id="review-spinner" class="htmx-indicator text-xs text-gray-400">Claude is reviewing… (may take ~60s)</span>
     </div>
     <p class="text-xs text-gray-500">
-      Sends the current SKILL.md to Claude Code, which checks SQL correctness, column names, YAML validity,
-      and missing guards — then rewrites the file if improvements are needed.
-      The result will show <code class="font-mono">SKILL_UPDATED</code> or <code class="font-mono">SKILL_OK</code>
-      with a short summary. Reload the page after an update to see the new content.
+      Claude Code will analyse the current SKILL.md, list any issues, and provide a suggested
+      improved version for you to review and edit before applying.
     </p>
-    <button hx-post="{% url 'agent:skill-review' name=name %}"
+    <button hx-post="{% url 'agent:skill-review-suggest' name=name %}"
             hx-target="#review-result"
             hx-swap="innerHTML"
             hx-indicator="#review-spinner"
-            hx-include="[name='content']"
             class="text-xs px-3 py-1.5 rounded-lg border border-purple-700/60 text-purple-300 hover:bg-purple-900/40 transition-colors">
       Review skill
     </button>

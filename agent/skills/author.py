@@ -82,6 +82,49 @@ Write a SKILL.md file at this EXACT path (create it now):
 Start writing now.
 """
 
+_REVIEW_SUGGEST_PROMPT = """\
+You are a skill reviewer for GavinAgent. Review ONE specific skill and suggest improvements.
+Do NOT ask clarifying questions. Do NOT write to any file. Just analyse and respond.
+
+## Skill to review
+
+Skill name: {skill_name}
+File path: {skill_path}
+
+Current SKILL.md content:
+```
+{current_content}
+```
+
+## Conventions (from AGENTS.md)
+
+{agents_md}
+
+## Review checklist
+
+1. YAML frontmatter: valid schema, no non-ASCII in flow sequences, version is an integer
+2. SQL/API patterns: column names, table names, filter values correct and specific?
+3. Missing guards: is there a "Do NOT use" or "WARNING" section for known wrong approaches?
+4. Search strategy: specific enough for the agent to use without scatter-searching?
+5. Examples: do the trigger examples match real user requests?
+
+## Output format
+
+Respond with these three sections, in order:
+
+### Issues found
+List each problem as a bullet. If none, write "No issues found."
+
+### Suggested improvements
+Explain what should change and why (2-5 sentences).
+
+### Suggested SKILL.md
+Output the complete improved SKILL.md inside a fenced code block (``` ... ```).
+If no changes are needed, output the original content unchanged.
+
+Start reviewing now.
+"""
+
 _REVIEW_PROMPT = """\
 You are a skill reviewer for GavinAgent. Your job is to review ONE specific skill RIGHT NOW.
 Do NOT ask clarifying questions. Do NOT list other skills. Act immediately.
@@ -252,3 +295,64 @@ def review_skill(skill_name: str) -> dict:
     except Exception as exc:
         logger.exception("review_skill unexpected error")
         return {"status": "error", "output": str(exc), "updated": []}
+
+
+def review_skill_suggest(skill_name: str) -> dict:
+    """
+    Ask Claude Code to analyse a SKILL.md and return suggestions + a proposed rewrite,
+    WITHOUT writing anything to disk.
+    Returns {"status": "ok"|"error", "output": str, "suggested_content": str|None}.
+    The suggested_content is the first fenced code block found in Claude's output.
+    """
+    import re
+    skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
+    skill_path = skills_dir / skill_name / "SKILL.md"
+
+    if not skill_path.exists():
+        return {"status": "error", "output": f"SKILL.md not found for '{skill_name}'", "suggested_content": None}
+
+    current_content = skill_path.read_text(encoding="utf-8")
+
+    prompt = _REVIEW_SUGGEST_PROMPT.format(
+        skill_name=skill_name,
+        skill_path=str(skill_path),
+        current_content=current_content,
+        agents_md=_read_agents_md(),
+    )
+
+    cmd = _claude_cmd()
+    logger.info("review_skill_suggest using cmd: %s", cmd)
+    try:
+        result = subprocess.run(
+            cmd + ["--print", "--no-session-persistence", "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            cwd=str(Path(settings.AGENT_WORKSPACE_DIR).parent.parent),
+        )
+        output = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        if result.returncode != 0:
+            return {"status": "error", "output": stderr or output or f"exit code {result.returncode}", "suggested_content": None}
+
+        # Extract the last fenced code block as the suggested SKILL.md
+        blocks = re.findall(r"```(?:markdown|md|yaml|)?\n([\s\S]*?)```", output)
+        suggested_content = blocks[-1].strip() if blocks else None
+
+        return {"status": "ok", "output": output, "suggested_content": suggested_content}
+
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "output": (
+                f"Claude CLI not found (tried: {cmd}). "
+                "Install Claude Code: https://docs.anthropic.com/claude-code "
+                "or set CLAUDE_CMD env var to the full path of claude.cmd."
+            ),
+            "suggested_content": None,
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "output": "Claude Code timed out after 180s.", "suggested_content": None}
+    except Exception as exc:
+        logger.exception("review_skill_suggest unexpected error")
+        return {"status": "error", "output": str(exc), "suggested_content": None}

@@ -137,9 +137,11 @@ from django import forms
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db.models import Count, Sum
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.middleware.csrf import get_token
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
+from django.urls import reverse
 from django.utils import timezone
 from django.views import View
 from django.views.generic import ListView, DetailView, TemplateView
@@ -653,8 +655,58 @@ class SkillAuthorView(View):
         return JsonResponse(result)
 
 
+class SkillReviewSuggestView(View):
+    """POST /agent/skills/<name>/review/suggest/ — ask Claude to analyse and suggest, without writing."""
+
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        from agent.skills.author import review_skill_suggest
+        result = review_skill_suggest(skill_name=name)
+
+        if request.htmx:
+            return render(request, "agent/_skill_review_result.html", {
+                "status": result["status"],
+                "output": result["output"],
+                "suggested_content": result.get("suggested_content") or "",
+                "skill_name": name,
+            })
+        return JsonResponse(result)
+
+
+class SkillReviewApplyView(View):
+    """POST /agent/skills/<name>/review/apply/ — write suggested content to SKILL.md and re-embed."""
+
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        content = request.POST.get("suggested-content", "").strip()
+        if not content:
+            return HttpResponse('<p class="text-red-400 text-sm">No content to apply.</p>')
+
+        from pathlib import Path
+        skill_path = Path(settings.AGENT_WORKSPACE_DIR) / "skills" / name / "SKILL.md"
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(content + "\n", encoding="utf-8")
+
+        from agent.skills.loader import SkillLoader
+        from agent.skills import registry as skill_registry
+        from agent.skills.embeddings import embed_all_skills
+        skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
+        SkillLoader(skills_dir).load_all(skill_registry)
+        updated = embed_all_skills()
+
+        if request.htmx:
+            from django.utils.html import escape
+            embed_msg = f", re-embedded: {', '.join(updated)}" if updated else ""
+            html = (
+                f'<div class="text-green-400 text-sm space-y-1">'
+                f'<p>✓ Applied and saved{escape(embed_msg)}.</p>'
+                f'<p class="text-xs text-gray-500">Reload the editor page to see the updated content.</p>'
+                f'</div>'
+            )
+            return HttpResponse(html)
+        return redirect("agent:skill-edit", name=name)
+
+
 class SkillReviewView(View):
-    """POST /agent/skills/<name>/review/ — invoke Claude Code to review an existing skill."""
+    """POST /agent/skills/<name>/review/ — invoke Claude Code to review and directly apply."""
 
     def post(self, request: HttpRequest, name: str) -> HttpResponse:
         from agent.skills.author import review_skill

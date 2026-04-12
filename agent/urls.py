@@ -36,6 +36,8 @@ urlpatterns = [
     path("skills/install/", views.SkillInstallView.as_view(), name="skill-install"),
     path("skills/<str:name>/edit/", views.SkillEditView.as_view(), name="skill-edit"),
     path("skills/<str:name>/review/", views.SkillReviewView.as_view(), name="skill-review"),
+    path("skills/<str:name>/review/suggest/", views.SkillReviewSuggestView.as_view(), name="skill-review-suggest"),
+    path("skills/<str:name>/review/apply/", views.SkillReviewApplyView.as_view(), name="skill-review-apply"),
     path("skills/<str:name>/toggle/", views.SkillToggleView.as_view(), name="skill-toggle"),
     path("skills/<str:name>/delete/", views.SkillDeleteView.as_view(), name="skill-delete"),
 
