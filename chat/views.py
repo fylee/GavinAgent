@@ -275,7 +275,12 @@ class MessageStreamView(View):
                     r = loop_trace[i % len(loop_trace)].get("round", i + 1)
                     te_by_round.setdefault(r, []).append(te)
             loop_trace_with_tes = [
-                {**entry, "tool_executions": te_by_round.get(entry.get("round", 0), [])}
+                {**entry,
+                 "tool_executions": te_by_round.get(entry.get("round", 0), []),
+                 "elapsed_s": (
+                     round(entry["ts"] - active_agent_run.started_at.timestamp(), 1)
+                     if entry.get("ts") and active_agent_run.started_at else None
+                 )}
                 for entry in loop_trace
             ]
             # If there are TEs but no loop_trace yet (first round in flight),
@@ -338,7 +343,12 @@ class MessageStreamView(View):
                     for te in run_tes:
                         te_by_round.setdefault(te.round or 0, []).append(te)
                     loop_trace_with_tes = [
-                        {**entry, "tool_executions": te_by_round.get(entry.get("round", 0), [])}
+                        {**entry,
+                         "tool_executions": te_by_round.get(entry.get("round", 0), []),
+                         "elapsed_s": (
+                             round(entry["ts"] - completed_run.started_at.timestamp(), 1)
+                             if entry.get("ts") and completed_run.started_at else None
+                         )}
                         for entry in loop_trace
                     ]
                     bare_tes = run_tes if (not loop_trace and run_tes) else []
