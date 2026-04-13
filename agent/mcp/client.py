@@ -78,20 +78,28 @@ async def run_sse_connection(
     on_ready: callable,
     on_error: callable,
 ) -> None:
-    """Long-running coroutine that maintains an SSE MCP connection."""
+    """Long-running coroutine that maintains an SSE MCP connection.
+
+    Retries indefinitely on transient errors (network blips, incomplete chunked
+    reads, peer resets) with exponential backoff capped at 60 s.  Only calls
+    on_error and exits when the stop signal is set or an unrecoverable error
+    occurs after MAX_HARD_FAILURES consecutive failures without any successful
+    connection.
+    """
     from mcp import ClientSession
     from mcp.client.sse import sse_client
 
-    retries = 0
-    max_retries = 3
+    MAX_HARD_FAILURES = 10   # give up only after this many consecutive failures
+    consecutive_failures = 0
 
-    while retries < max_retries and not conn.stop.is_set():
+    while not conn.stop.is_set():
         try:
             async with sse_client(url, headers=headers) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     conn.session = session
                     conn.ready.set()
+                    consecutive_failures = 0   # reset on successful connect
                     await on_ready(server_name, session)
                     await conn.stop.wait()
                     conn.session = None
@@ -99,15 +107,25 @@ async def run_sse_connection(
         except asyncio.CancelledError:
             break
         except Exception as exc:
-            logger.error("MCP SSE server %s error: %s", server_name, exc)
             conn.session = None
             conn.ready.clear()
-            retries += 1
-            if not conn.stop.is_set():
-                if retries < max_retries:
-                    await asyncio.sleep(5 * retries)
-                else:
-                    await on_error(server_name, str(exc))
+            consecutive_failures += 1
+            if conn.stop.is_set():
+                break
+            if consecutive_failures >= MAX_HARD_FAILURES:
+                logger.error(
+                    "MCP SSE server %s: %d consecutive failures — giving up. Last error: %s",
+                    server_name, consecutive_failures, exc,
+                )
+                await on_error(server_name, str(exc))
+                return
+            # Exponential backoff: 5s, 10s, 20s, 40s, capped at 60s
+            delay = min(5 * (2 ** (consecutive_failures - 1)), 60)
+            logger.warning(
+                "MCP SSE server %s error (attempt %d/%d), retrying in %ds: %s",
+                server_name, consecutive_failures, MAX_HARD_FAILURES, delay, exc,
+            )
+            await asyncio.sleep(delay)
 
 
 def extract_tool_content(result) -> str:
