@@ -116,25 +116,30 @@ Current SKILL.md content:
 
 ## Review checklist
 
-1. **Spec compliance (agentskills.io):**
-   - Only spec-defined top-level keys: `name`, `description`, `allowed-tools`, `compatibility`, `license`, `metadata`
-   - NO top-level `triggers`, `examples`, `version`, `approval_required`, or `tools` keys
-   - `metadata` values must be strings (pipe-separated, not YAML lists or booleans)
-   - `name` matches the skill directory name; lowercase, hyphens only
+Use one of two prefixes for every issue you list:
 
-2. **Description quality:**
-   - Must be 80–300 characters
-   - Must describe BOTH what the skill does AND when to use it
-   - Must include domain-specific keywords that help agents identify relevance
+- `[Spec violation]` — the skill breaks the agentskills.io specification. These MUST be fixed.
+- `[GavinAgent]` — a GavinAgent quality recommendation. These SHOULD be fixed but are not hard failures.
 
-3. **Routing quality (GavinAgent):**
-   - `metadata.triggers` covers the main vocabulary a user would use for this skill
-   - `metadata.examples` includes realistic user requests that should trigger this skill
+### [Spec violation] checks (agentskills.io hard rules)
 
-4. **Body quality:**
-   - Has a "Do NOT use" or "WARNING" section for known wrong approaches
-   - SQL/API patterns have correct column names, table names, and filter values
-   - Search strategy is specific (numbered steps, no scatter-searching)
+- Top-level keys must be ONLY: `name`, `description`, `allowed-tools`, `compatibility`, `license`, `metadata`
+- `name` must be lowercase with hyphens only and must match the skill directory name
+- `metadata` values must be strings — no YAML lists (`[]`), no booleans, no integers
+- No non-ASCII characters in frontmatter values (no Chinese, emoji, etc.)
+- No top-level `triggers`, `examples`, `version`, `approval_required`, or `tools` keys
+
+### [GavinAgent] quality checks (routing & usability)
+
+- `metadata.triggers` should cover the full vocabulary a user would use for this skill
+- `metadata.examples` should include 3–5 realistic user phrasings that should trigger this skill
+- `metadata.trigger_patterns` (optional) can add regex patterns for precision routing; use `;;` as separator
+- `description` must be 80–300 chars and describe BOTH what the skill does AND when to use it
+- Body should have a "Do NOT use" or "WARNING" section for known wrong approaches
+- SQL/API patterns should have correct column names, table names, and filter values
+- Search strategy should be specific (numbered steps, no scatter-searching)
+
+In the === Recommand === section, prefix every item with `[Spec violation]` or `[GavinAgent]` so the user can see which issues are mandatory vs advisory.
 
 Output the two sections now. Nothing before === Recommand === and nothing after the suggested version content.
 """
