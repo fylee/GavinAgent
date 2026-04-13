@@ -279,6 +279,39 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]
     except Exception:
         pass
 
+    # Inject MCP connectivity status so the agent can distinguish
+    # "server configured but tools not yet loaded" from "server not configured".
+    try:
+        from agent.models import MCPServer
+        from agent.mcp.pool import MCPConnectionPool
+        from agent.mcp.registry import get_registry as get_mcp_registry
+
+        pool = MCPConnectionPool.get()
+        reg = get_mcp_registry()
+        mcp_servers = list(MCPServer.objects.filter(enabled=True))
+        if mcp_servers:
+            mcp_lines: list[str] = []
+            for srv in mcp_servers:
+                tool_count = sum(
+                    1 for e in reg.all().values() if e.server_name == srv.name
+                )
+                pool_status = pool.get_status(srv.name)
+                if tool_count > 0:
+                    status_str = f"connected — {tool_count} tools available"
+                elif pool_status == "connected":
+                    status_str = "connected — tools loading (retry in a few seconds)"
+                else:
+                    status_str = "disconnected — tools unavailable"
+                mcp_lines.append(f"- **{srv.name}**: {status_str}")
+            parts.append(
+                "## MCP Server Status\n\n"
+                + "\n".join(mcp_lines)
+                + "\n\nIf a required server shows 'tools loading', wait 10–30 seconds and retry. "
+                "If it shows 'disconnected', ask the user to reconnect it via GavinAgent MCP settings."
+            )
+    except Exception:
+        pass
+
     # Knowledge base context (auto-injected via RAG)
     rag_matches: list[dict] = []
     try:

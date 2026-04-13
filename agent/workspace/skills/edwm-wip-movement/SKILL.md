@@ -120,24 +120,18 @@ This avoids the multi-round investigation seen when the date filter returns 0 ro
 
 ### When EDWM tools are not in your tool list
 
-If you cannot see any `edwm__*` tools in your available tool list, the EDWM MCP
-server is not connected. This is different from a session expiry (below).
+Check the **MCP Server Status** section of your system context for the `edwm` server:
+
+- **"connected — N tools available"** — tools are loaded; you should see `edwm__*` in your tool list. If you don't, there may be a name mismatch — check available tools.
+- **"connected — tools loading"** — the server just restarted; tools haven't populated yet. Tell the user: *"EDWM is connecting, please retry in ~15 seconds."* Do NOT say "not connected".
+- **"disconnected"** — the server is genuinely offline. Tell the user to reconnect via GavinAgent → MCP settings.
+- **Status section absent** — treat as disconnected.
 
 **Do NOT:**
 - Say "the skill handler isn't available" — this confuses skill handlers with MCP
 - Offer to chart "cached data" — you have no cached EDWM data
 - Ask the user clarifying questions before explaining the problem
-
-**Do:**
-Tell the user immediately and clearly:
-
-> "The EDWM MCP server is not connected in this session, so I cannot query
-> EDWM data. Please connect it first:
-> 1. Open the MCP settings in GavinAgent (sidebar → MCP)
-> 2. Verify the EDWM MCP server status shows **Connected**
-> 3. Once connected, re-send your request and I will execute it immediately."
-
-Then stop. Do not offer alternatives or ask questions.
+- Tell the user to "open MCP settings" if the status shows "tools loading" — just ask them to retry
 
 ---
 
