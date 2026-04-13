@@ -17,11 +17,11 @@ _MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
 class RunSkillTool(BaseTool):
     name = "run_skill"
     description = (
-        "Execute a workspace skill handler by name. "
-        "Use this to run a skill that has been activated in your context — "
-        "for example, call run_skill with skill_name='weather' and "
-        "input='Taipei, Kaohsiung' to get weather data. "
-        "Always prefer this over web_read or api_get when a skill is available for the task."
+        "Execute a workspace skill that has a handler.py file. "
+        "Only call this when the skill's instructions explicitly say to use run_skill, "
+        "or when the skill index shows it has a handler. "
+        "Do NOT call this for MCP-based skills (those use edwm__, or similar prefixed tools directly). "
+        "Example: run_skill with skill_name='weather' and input='Taipei'."
     )
     approval_policy = ApprovalPolicy.AUTO
     parameters = {
@@ -41,13 +41,32 @@ class RunSkillTool(BaseTool):
 
     def execute(self, skill_name: str, input: str, **kwargs: Any) -> ToolResult:
         start = time.monotonic()
-        skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
-        handler_path = skills_dir / skill_name / "handler.py"
+        # Resolve handler across all trusted skill source dirs (Spec 023)
+        handler_path: Path | None = None
+        try:
+            from agent.skills.discovery import collect_all_skills
+            all_skills = collect_all_skills(check_db_trust=True)
+            for info in all_skills:
+                if info["name"] == skill_name and info["trusted"]:
+                    candidate = info["skill_dir"] / "handler.py"
+                    if candidate.exists():
+                        handler_path = candidate
+                    break
+        except Exception:
+            # Fallback to native dir
+            skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
+            candidate = skills_dir / skill_name / "handler.py"
+            if candidate.exists():
+                handler_path = candidate
 
-        if not handler_path.exists():
+        if handler_path is None:
             return ToolResult(
                 output=None,
-                error=f"Skill '{skill_name}' has no handler.py.",
+                error=(
+                    f"Skill '{skill_name}' has no handler.py. "
+                    "If this is an MCP-based skill, call its MCP tools directly "
+                    "(e.g. edwm__get_logical_table_id_by_name) instead of run_skill."
+                ),
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
 
