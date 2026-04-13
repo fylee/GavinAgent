@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from django.conf import settings
@@ -67,8 +68,9 @@ def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
     Spec 023: uses collect_all_skills() for multi-source discovery.
     rules/*.md content is appended to skill body at injection time.
 
-    Returns (section_text, triggered_skill_names, skill_entries).
+    Returns (section_text, triggered_skill_names, skill_entries, skill_dir_map).
     skill_entries: list of {name, status, match} for context_trace.
+    skill_dir_map: {name: skill_dir} for all trusted skills (reused by call_llm).
     """
     import re
     import yaml
@@ -168,7 +170,7 @@ def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
             body_sections.append(f"{heading}\n\n{injected_body}")
 
     if not index_rows:
-        return "", [], []
+        return "", [], [], {}
 
     index = (
         "## Skills\n\n"
@@ -183,7 +185,13 @@ def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
     else:
         section = index
 
-    return section, triggered, skill_entries
+    # Build skill_dir_map for reuse (avoids second collect_all_skills call in call_llm)
+    skill_dir_map: dict[str, Path] = {
+        s["name"]: s["skill_dir"]
+        for s in all_skills
+        if s["trusted"]
+    }
+    return section, triggered, skill_entries, skill_dir_map
 
 
 def _build_knowledge_section(query: str) -> tuple[str, list[dict]]:
@@ -243,11 +251,51 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]
     if soul_md:
         parts.append(soul_md)
 
-    skills_section, triggered, skill_entries = _build_skills_section(query)
+    # ── Parallelise the three independent vector-DB lookups ────────────────
+    # skills (pgvector), long-term memory (pgvector), knowledge RAG (pgvector)
+    # and MCP resources (network) run concurrently; total wall time ≈ slowest one.
+    skills_section = triggered = skill_entries = None
+    excerpts: list[str] = []
+    rag_matches: list[dict] = []
+    knowledge_section = ""
+    mcp_resources: list[str] = []
 
-    # Spec 022: inject skill catalog (name + description for all enabled skills)
-    # so the LLM has visibility into available skills even when embedding routing
-    # doesn't select them.  Placed before the detailed skill instructions.
+    def _fetch_skills():
+        return _build_skills_section(query)
+
+    def _fetch_memory():
+        try:
+            from agent.memory.long_term import search_long_term
+            return search_long_term(query, limit=5) or []
+        except Exception:
+            return []
+
+    def _fetch_knowledge():
+        try:
+            return _build_knowledge_section(query)
+        except Exception:
+            return "", []
+
+    def _fetch_mcp_resources():
+        try:
+            from agent.mcp.pool import MCPConnectionPool
+            return MCPConnectionPool.get().fetch_always_include_resources() or []
+        except Exception:
+            return []
+
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="ctx") as pool:
+        f_skills = pool.submit(_fetch_skills)
+        f_memory = pool.submit(_fetch_memory)
+        f_knowledge = pool.submit(_fetch_knowledge)
+        f_mcp = pool.submit(_fetch_mcp_resources)
+
+        skills_section, triggered, skill_entries, skill_dir_map = f_skills.result()
+        excerpts = f_memory.result()
+        knowledge_section, rag_matches = f_knowledge.result()
+        mcp_resources = f_mcp.result()
+    # ── End parallel section ───────────────────────────────────────────────
+
+    # Spec 022: inject skill catalog
     try:
         from agent.skills.embeddings import build_skill_catalog
         catalog = build_skill_catalog()
@@ -260,24 +308,14 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]
         parts.append(skills_section)
 
     memory_excerpts = 0
-    try:
-        from agent.memory.long_term import search_long_term
-        excerpts = search_long_term(query, limit=5)
-        if excerpts:
-            memory_excerpts = len(excerpts)
-            parts.append("## Relevant memories\n\n" + "\n\n".join(excerpts))
-    except Exception:
-        pass
+    if excerpts:
+        memory_excerpts = len(excerpts)
+        parts.append("## Relevant memories\n\n" + "\n\n".join(excerpts))
 
     mcp_resources_chars = 0
-    try:
-        from agent.mcp.pool import MCPConnectionPool
-        resources = MCPConnectionPool.get().fetch_always_include_resources()
-        if resources:
-            mcp_resources_chars = sum(len(r) for r in resources)
-            parts.append("## MCP Resources\n\n" + "\n\n".join(resources))
-    except Exception:
-        pass
+    if mcp_resources:
+        mcp_resources_chars = sum(len(r) for r in mcp_resources)
+        parts.append("## MCP Resources\n\n" + "\n\n".join(mcp_resources))
 
     # Inject MCP connectivity status so the agent can distinguish
     # "server configured but tools not yet loaded" from "server not configured".
@@ -314,14 +352,9 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]
     except Exception:
         pass
 
-    # Knowledge base context (auto-injected via RAG)
-    rag_matches: list[dict] = []
-    try:
-        knowledge_section, rag_matches = _build_knowledge_section(query)
-        if knowledge_section:
-            parts.append(knowledge_section)
-    except Exception:
-        pass
+    # Knowledge base context (auto-injected via RAG) — already fetched in parallel above
+    if knowledge_section:
+        parts.append(knowledge_section)
 
     content = "\n\n---\n\n".join(parts) if parts else "You are a helpful AI assistant."
 
@@ -368,13 +401,16 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]
         "total_prompt_chars": len(content),
     }
 
-    return content, triggered, rag_matches, context_trace
+    return content, triggered, rag_matches, context_trace, skill_dir_map
 
 
-def _get_agent_model(agent_id: str) -> str:
+def _get_agent_model(state: dict) -> str:
+    """Return model name for this agent. Cached in state after first lookup."""
+    if state.get("_agent_model"):
+        return state["_agent_model"]
     from agent.models import Agent
     try:
-        agent = Agent.objects.get(pk=agent_id)
+        agent = Agent.objects.get(pk=state["agent_id"])
         return agent.model or settings.LITELLM_DEFAULT_MODEL
     except Agent.DoesNotExist:
         return settings.LITELLM_DEFAULT_MODEL
@@ -433,8 +469,8 @@ def call_llm(state: AgentState) -> dict:
     except Exception:
         pass
 
-    model = _get_agent_model(state["agent_id"])
-    system_content, triggered_skills, rag_matches, context_trace = _build_system_context(state.get("input", ""))
+    model = _get_agent_model(state)
+    system_content, triggered_skills, rag_matches, context_trace, skill_dir_map = _build_system_context(state.get("input", ""))
 
     # Append conversation_id to system prompt so agent can reference it in workflows
     conversation_id = state.get("conversation_id")
@@ -559,18 +595,12 @@ def call_llm(state: AgentState) -> dict:
         ]
         # Auto-inject tools declared as required by triggered skills but absent
         # from the agent's enabled_tools list.
+        # Reuse skill_dir_map returned by _build_system_context (no second collect_all_skills call).
         if triggered_skills:
             import yaml as _yaml
-            from agent.skills.discovery import collect_all_skills
-            # Build name→skill_dir map from all trusted sources
-            _skill_dir_map: dict[str, Path] = {
-                s["name"]: s["skill_dir"]
-                for s in collect_all_skills(check_db_trust=True)
-                if s["trusted"]
-            }
             auto_inject: set[str] = set()
             for skill_name in triggered_skills:
-                skill_dir = _skill_dir_map.get(skill_name)
+                skill_dir = skill_dir_map.get(skill_name)
                 if skill_dir is None:
                     continue
                 skill_md = skill_dir / "SKILL.md"
@@ -607,7 +637,7 @@ def call_llm(state: AgentState) -> dict:
     except Exception:
         pass
 
-    # Fetch run object for LLMUsage tracking + triggered_skills
+    # Fetch run object for LLMUsage tracking + triggered_skills — single DB read
     _run_obj = None
     try:
         from agent.models import AgentRun
@@ -615,9 +645,7 @@ def call_llm(state: AgentState) -> dict:
         update_fields = {}
         if triggered_skills:
             update_fields["triggered_skills"] = triggered_skills
-        # Store RAG document matches, active MCP servers, and context_trace in graph_state for UI display
-        run_obj = AgentRun.objects.get(pk=state["run_id"])
-        gs = run_obj.graph_state or {}
+        gs = _run_obj.graph_state or {}
         if rag_matches:
             gs["rag_matches"] = rag_matches
         # Store names of connected MCP servers included in this call's tool list
@@ -1307,8 +1335,8 @@ def force_conclude(state: AgentState) -> dict:
     from core.llm import get_completion
     from agent.models import AgentRun
 
-    model = _get_agent_model(state["agent_id"])
-    system_content, _, _, _ = _build_system_context(state.get("input", ""))
+    model = _get_agent_model(state)
+    system_content, _, _, _, _ = _build_system_context(state.get("input", ""))
 
     # Collect any markdown-bearing results (e.g. chart images) so they are
     # always preserved verbatim regardless of what the LLM does with them.
