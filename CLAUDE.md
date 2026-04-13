@@ -54,6 +54,12 @@ Always use these technologies. Do not introduce alternatives (e.g., Flask, React
 - File names should be descriptive kebab-case: `database-schema.md`, `deployment.md`, etc.
 - Keep docs up to date when implementing spec changes
 
+## Skills
+
+- All skills live in `agent/workspace/skills/<name>/SKILL.md` — this is the **source of truth**
+- After editing a skill, run `uv run python manage.py sync_claude_code --skills-only` to push changes to `~/.claude/skills/`
+- **Never edit `~/.claude/skills/` directly** — changes will be overwritten on the next sync
+
 ## Workflow
 
 1. For any non-trivial change, check `.spec/` for an existing spec

@@ -3,31 +3,43 @@ name: edwm-wip-movement
 description: Query EDWM WIP and movement data for CT (Taichung) and KH (Kaohsiung) FAB. Use for fab production move counts, lot movement queries, and daily move summaries.
 compatibility: Requires EDWM MCP server (SSE transport)
 metadata:
-  triggers: "wip | movement | move | lot_move | wafer_move | step_move | mvmt | fab move | daily move | shift move | taichung move | ct move | ct wip | kh move | kh wip | kaohsiung move"
-  examples: "search EDWM for movement yesterday in Taichung FAB | Taichung CT daily wafer move by lot_type | CT FAB prod_move yesterday | sum_step_move_prod yesterday Taichung | KH FAB movement last 7 days"
-  version: "5"
+  triggers: "edwm | wip | movement | move | prod move | production move | move count | lot_move | wafer_move | wafer movement | step_move | mvmt | fab move | fab wip | daily move | shift move | taichung move | ct move | ct wip | kh move | kh wip | kaohsiung move"
+  examples: "search EDWM for movement yesterday in Taichung FAB | Taichung CT daily wafer move by lot_type | CT FAB prod_move yesterday | sum_step_move_prod yesterday Taichung | KH FAB movement last 7 days | how many wafers moved in KH yesterday | CT daily production move count"
+  version: "6"
 ---
 
-## EDWM WIP / Movement Queries ??CT (Taichung) & KH (Kaohsiung) FAB
+## EDWM WIP / Movement Queries -- CT (Taichung) & KH (Kaohsiung) FAB
 
-### Confirmed table schema ??`sum_step_move_prod`
+### Overview / Key conventions
+
+- Table: `sum_step_move_prod` in `ctfabrpt.reportuser` (CT) or `khfabrpt.reportuser` (KH)
+- Move column: `prod_move` -- **not** `move_qty` or `wip_qty` (those columns do not exist)
+- Production lot filter: `lot_type IN ('P', 'PE')` -- **not** `'PROD'`
+- Date column: `data_date` is a **timestamp** -- always use `DATE(data_date)` in WHERE clauses
+- "Yesterday" in EDWM = `DATE(NOW() AT TIME ZONE 'Asia/Taipei') - INTERVAL '1' DAY`
+- Default to CT (Taichung) if the user does not specify a FAB; note the assumption
+- Do not guess column names -- use `get_logical_table_detail` to confirm any column not listed here
+
+---
+
+### Confirmed table schema -- `sum_step_move_prod`
 
 Verified from live query:
 ```sql
 SELECT lot_type, data_date, SUM(prod_move)
-FROM <catalog>.reportuser.sum_step_move_prod
+FROM ctfabrpt.reportuser.sum_step_move_prod
 GROUP BY lot_type, data_date
 ```
 
 **Key columns:**
 | Column | Description |
 |--------|-------------|
-| `lot_type` | Lot classification (e.g. PROD, ENG, ?? |
-| `data_date` | Production date — stored as **timestamp**; cast with `DATE(data_date)` when filtering |
-| `prod_move` | Movement count ??**this is the correct move column** (NOT `move_qty`) |
+| `lot_type` | Lot classification -- production lots are `'P'` and `'PE'` |
+| `data_date` | Production date -- stored as **timestamp**; cast with `DATE(data_date)` when filtering |
+| `prod_move` | Movement count -- **this is the correct move column** (NOT `move_qty`) |
 
-> ?? The move column is `prod_move`, **not** `move_qty`. Do not use `move_qty` or `wip_qty` ??they do not exist in this table.
-> Production lot filter is `lot_type IN ('P', 'PE')` ??**not** `'PROD'`.
+> The move column is `prod_move`, **not** `move_qty`. Do not use `move_qty` or `wip_qty` -- they do not exist in this table.
+> Production lot filter is `lot_type IN ('P', 'PE')` -- **not** `'PROD'`.
 
 ---
 
@@ -41,23 +53,6 @@ GROUP BY lot_type, data_date
 - Use `ctfabrpt` for Taichung / CT queries.
 - Use `khfabrpt` for Kaohsiung / KH queries.
 - If the user does not specify a FAB, default to **CT** and note the assumption.
-
----
-
-### Key conventions
-
-1. **"Yesterday" means the EDWM production day**: one full day shift runs
-   **07:00 -> 07:00 (next day)**, so yesterday = `DATE(NOW() AT TIME ZONE 'Asia/Taipei') - INTERVAL '1' DAY`.
-
-2. **"Movement" always means production lots** — filter `lot_type IN ('P', 'PE')`
-   unless the user explicitly asks for all lot types. Do **not** use `lot_type = 'PROD'`.
-
-3. **`data_date` is a timestamp column** — always wrap with `DATE(data_date)` when filtering,
-   e.g. `DATE(data_date) = DATE(NOW() AT TIME ZONE 'Asia/Taipei') - INTERVAL '1' DAY`.
-   Comparing a raw timestamp with a date literal returns 0 rows.
-
-4. **Do not guess column names** — if unsure about other columns (e.g. `step_id`,
-   `fab_id`), use `get_logical_table_detail` to confirm before writing the query.
 
 ---
 
@@ -103,9 +98,10 @@ ORDER BY fab, data_date;
 
 ### Do NOT use these for WIP/Movement
 
-- `move_qty`, `wip_qty` — these columns do **not** exist in `sum_step_move_prod`.
-- `ctfabrpt.reportuser.lot_input` — this is for **wafer starts (lot input)**, not movement.
-- `data_date = <date>` without `DATE()` cast — `data_date` is a timestamp; bare equality returns 0 rows.
+- `move_qty`, `wip_qty` -- these columns do **not** exist in `sum_step_move_prod`.
+- `ctfabrpt.reportuser.lot_input` -- this is for **wafer starts (lot input)**, not movement.
+- `data_date = <date>` without `DATE()` cast -- `data_date` is a timestamp; bare equality returns 0 rows.
+- `lot_type = 'PROD'` -- production lots are `'P'` and `'PE'`, not `'PROD'`.
 
 ---
 
@@ -114,7 +110,7 @@ ORDER BY fab, data_date;
 When the user asks about EDWM movement or WIP, **do not scatter-search** the
 data dictionary with many individual keywords. Instead:
 
-1. Go directly to `ctfabrpt.reportuser.sum_step_move_prod` (CT) or `khfabrpt.reportuser.sum_step_move_prod` (KH) — the table is already known.
+1. Go directly to `ctfabrpt.reportuser.sum_step_move_prod` (CT) or `khfabrpt.reportuser.sum_step_move_prod` (KH) -- the table is already known.
 2. Use `get_logical_table_id_by_name` with `"sum_step_move_prod"` only if you need the logical table ID for `get_logical_table_detail`.
 3. Write and execute the Trino SQL **in one round** using the confirmed column names above.
 
@@ -134,15 +130,15 @@ EDWM MCP uses SSE transport with server-side session management. Sessions can ex
 | `ClosedResourceError` | SSE stream was closed by the server |
 
 **How to confirm it's a session issue, not a SQL issue:**
-- Call `get_current_date` (no parameters). If it also returns `-32602`, the session is dead — it cannot be a parameter problem.
+- Call `get_current_date` (no parameters). If it also returns `-32602`, the session is dead -- it cannot be a parameter problem.
 
-**Recovery steps (Claude cannot auto-reconnect — no CLI restart command exists):**
+**Recovery steps (Claude cannot auto-reconnect -- no CLI restart command exists):**
 
 1. Tell the user: "EDWM MCP session has expired. Please reconnect:"
    ```
-   Option A: Restart Claude Code — the only reliable fix; forces a fresh SSE handshake
-   Option B: Click the MCP icon in Claude Code → reconnect EDWM MCP (if available in your version)
+   Option A: Restart Claude Code -- the only reliable fix; forces a fresh SSE handshake
+   Option B: Click the MCP icon in Claude Code -> reconnect EDWM MCP (if available in your version)
    ```
-   > Do NOT suggest `! claude mcp list` — it only pings the SSE endpoint and does not re-establish the session.
-2. After the user confirms reconnection, **retry the original query immediately** — do not ask the user to repeat themselves.
+   > Do NOT suggest `! claude mcp list` -- it only pings the SSE endpoint and does not re-establish the session.
+2. After the user confirms reconnection, **retry the original query immediately** -- do not ask the user to repeat themselves.
 3. If the session keeps expiring mid-conversation, ask the EDWM MCP admin to increase the server-side SSE session timeout.

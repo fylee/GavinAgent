@@ -52,7 +52,7 @@ sequenceDiagram
     CP->>MS: ask_agent(task="…")
     MS->>DB: AgentRun.objects.create(…)
     MS->>CW: AgentRunner.enqueue(run)  [via Celery .delay()]
-    loop Poll every 2 s (max 5 min)
+    loop Poll with exp. back-off 1→5 s (max timeout_seconds)
         MS->>DB: AgentRun.objects.get(id=…).status
     end
     DB-->>MS: status=COMPLETED, output="…"
@@ -75,14 +75,44 @@ charting, external APIs, MCP servers, skills, and long-term memory.
 | `agent_name` | `str` | — | Name of a specific agent (default: `is_default=True`) |
 | `timeout_seconds` | `int` | — | Max wait time (default: `AGENT_MCP_TIMEOUT_SECONDS`, 300) |
 
-**Returns** — the agent's final answer string, or a descriptive error/timeout
-message that includes the `AgentRun.id` for investigation.
+**Returns** — `{"output": str}` on success, `{"error": str}` on failure or
+timeout. Error and timeout messages include the `AgentRun.id` for investigation.
+
+**Implementation notes**
+
+- `TriggerSource.CLI` is used; no `chat.Conversation` is created (the run is
+  not visible in the Chat sidebar).
+- Polling uses exponential back-off starting at 1 s, capped at 5 s
+  (not a fixed 2 s interval as originally planned).
 
 #### `list_agents`
 
-Return a formatted list of all active agents with names and descriptions.
-No parameters. Useful for discovering available agents before calling
-`ask_agent` with a specific `agent_name`.
+Return a list of all active agents. No parameters. Useful for discovering
+available agents before calling `ask_agent` with a specific `agent_name`.
+
+**Returns** — `list[dict]` with keys `name`, `description`, `model`,
+`is_default` for each active agent, ordered by name.
+
+#### `list_skills`
+
+Return a list of all enabled skills registered in the database.
+No parameters.
+
+**Returns** — `list[dict]` with keys `name`, `description`, ordered by name.
+
+#### `run_skill`
+
+Execute a workspace skill handler directly by name, bypassing the agent loop.
+Only works for skills that have a `handler.py` in their skill directory.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `skill_name` | `str` | ✓ | Skill directory name (e.g. `"weather"`, `"charts"`) |
+| `input` | `str` | ✓ | Input string passed to the skill's `handle()` function |
+
+**Returns** — `{"result": str}` on success, `{"error": str}` on failure.
 
 ---
 
@@ -156,8 +186,9 @@ The server process exits when Copilot terminates it.
 
 ## Open Questions
 
-1. Should the server create a `chat.Conversation` so the run is visible in the
-   Chat sidebar? (Currently planned: no — `TriggerSource.CLI`, no conversation.)
+1. ~~Should the server create a `chat.Conversation` so the run is visible in the
+   Chat sidebar?~~ **Decided: no.** Uses `TriggerSource.CLI`; runs are visible
+   in the Agent Runs admin but not in the Chat sidebar.
 2. Should there be a `get_run_status(run_id)` tool for async workflows where
    the caller does not want to block?
 3. Should `ask_agent` accept a `conversation_id` to continue an existing

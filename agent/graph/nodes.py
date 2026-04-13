@@ -37,8 +37,35 @@ def _truncate_history(history: list[dict], budget_tokens: int, model: str) -> li
     return history
 
 
+def _append_rules(skill_dir: Path, body: str) -> str:
+    """Spec 023: append rules/*.md content to the skill body at injection time.
+
+    Embedding serves routing (uses only SKILL.md frontmatter + first 500 chars).
+    Body injection serves execution — the full rules/ content is appended here
+    so the LLM receives complete instructions without polluting routing signal.
+    """
+    rules_dir = skill_dir / "rules"
+    if not rules_dir.is_dir():
+        return body
+    parts: list[str] = []
+    for rules_file in sorted(rules_dir.glob("*.md")):
+        try:
+            content = rules_file.read_text(encoding="utf-8").strip()
+            if content:
+                parts.append(f"### {rules_file.stem}\n\n{content}")
+        except Exception:
+            pass
+    if not parts:
+        return body
+    return body + "\n\n---\n\n" + "\n\n---\n\n".join(parts)
+
+
 def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
-    """Scan workspace/skills/, match against query using embeddings (with keyword fallback).
+    """Discover skills across all trusted source directories, match against query
+    using embeddings (with keyword fallback), inject body for matched skills.
+
+    Spec 023: uses collect_all_skills() for multi-source discovery.
+    rules/*.md content is appended to skill body at injection time.
 
     Returns (section_text, triggered_skill_names, skill_entries).
     skill_entries: list of {name, status, match} for context_trace.
@@ -46,10 +73,7 @@ def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
     import re
     import yaml
     from agent.skills.embeddings import find_relevant_skills
-
-    skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
-    if not skills_dir.exists():
-        return "", [], []
+    from agent.skills.discovery import collect_all_skills
 
     query_lower = query.lower()
 
@@ -68,12 +92,17 @@ def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
         Skill.objects.filter(enabled=False).values_list("name", flat=True)
     )
 
-    for skill_dir in sorted(skills_dir.iterdir()):
-        if not skill_dir.is_dir():
-            continue
+    # Spec 023: iterate over all trusted skill sources
+    all_skills = collect_all_skills(check_db_trust=True)
+    if not all_skills:
+        return "", [], []
+
+    for skill_info in all_skills:
+        skill_dir = skill_info["skill_dir"]
+        if not skill_info["trusted"]:
+            continue  # untrusted skills are invisible to the LLM
+
         skill_md = skill_dir / "SKILL.md"
-        if not skill_md.exists():
-            continue
         # Skip disabled skills
         if skill_dir.name in disabled_skills:
             continue
@@ -134,7 +163,9 @@ def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
             heading = f"### {name}"
             if description:
                 heading += f"\n{description}"
-            body_sections.append(f"{heading}\n\n{body}")
+            # Spec 023: append rules/*.md at injection time (not embed time)
+            injected_body = _append_rules(skill_dir, body)
+            body_sections.append(f"{heading}\n\n{injected_body}")
 
     if not index_rows:
         return "", [], []
@@ -495,10 +526,19 @@ def call_llm(state: AgentState) -> dict:
         # from the agent's enabled_tools list.
         if triggered_skills:
             import yaml as _yaml
-            skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
+            from agent.skills.discovery import collect_all_skills
+            # Build name→skill_dir map from all trusted sources
+            _skill_dir_map: dict[str, Path] = {
+                s["name"]: s["skill_dir"]
+                for s in collect_all_skills(check_db_trust=True)
+                if s["trusted"]
+            }
             auto_inject: set[str] = set()
             for skill_name in triggered_skills:
-                skill_md = skills_dir / skill_name / "SKILL.md"
+                skill_dir = _skill_dir_map.get(skill_name)
+                if skill_dir is None:
+                    continue
+                skill_md = skill_dir / "SKILL.md"
                 if skill_md.exists():
                     try:
                         raw = skill_md.read_text(encoding="utf-8")
@@ -512,7 +552,7 @@ def call_llm(state: AgentState) -> dict:
                     except Exception:
                         pass
                 # run_skill is always needed when a handler exists
-                if (skills_dir / skill_name / "handler.py").exists():
+                if (skill_dir / "handler.py").exists():
                     if "run_skill" not in enabled_tools:
                         auto_inject.add("run_skill")
             for tool_name in auto_inject:

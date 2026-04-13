@@ -8,6 +8,13 @@ class AgentConfig(AppConfig):
     def ready(self) -> None:
         import agent.signals  # noqa: F401 — registers signal receivers
 
+        # When running as an MCP server, skip all expensive startup work
+        # (workspace setup, skill DB sync, embedding) so mcp.run() is reached
+        # before the MCP client connection times out.
+        import os
+        if os.environ.get("GAVIN_MCP_SERVER"):
+            return
+
         from agent.workspace import ensure_workspace
         try:
             ensure_workspace()
@@ -15,28 +22,35 @@ class AgentConfig(AppConfig):
             # Don't crash Django startup if workspace can't be created
             pass
 
-        # Load skills into registry
-        from pathlib import Path
-        from django.conf import settings
+        # Load skills into registry from all source directories (Spec 023).
+        # check_db_trust=False during startup — DB may not be fully ready yet,
+        # and the trust check only gates embedding, not registry loading.
+        from agent.skills.discovery import all_skill_dirs
         from agent.skills.loader import SkillLoader
         from agent.skills import registry
 
-        skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
         try:
-            loader = SkillLoader(skills_dir)
-            loader.load_all(registry)
+            sources = all_skill_dirs(check_db_trust=False)
+            all_loaded: list[str] = []
+            for src in sources:
+                loader = SkillLoader(src.path)
+                loaded = loader.load_all(registry)
+                all_loaded.extend(loaded)
 
             # Sync loaded skills to DB (create missing rows, don't overwrite enabled flag)
             from agent.models import Skill
-            for name, entry in registry.all().items():
-                Skill.objects.get_or_create(
-                    name=name,
-                    defaults={
-                        "description": entry.description,
-                        "path": entry.path,
-                        "enabled": True,
-                    },
-                )
+            for name in all_loaded:
+                entry = registry.get(name)
+                if entry:
+                    Skill.objects.get_or_create(
+                        name=name,
+                        defaults={
+                            "description": entry.description,
+                            "path": entry.path,
+                            "source_dir": str(src.path),
+                            "enabled": True,
+                        },
+                    )
         except Exception:
             pass
 
@@ -47,12 +61,14 @@ class AgentConfig(AppConfig):
         except Exception:
             pass
 
-        # Embed skills for semantic routing (run in a thread — DB must be ready)
+        # Embed skills for semantic routing (run in a thread — DB must be ready).
+        # Spec 023: native_only=True at startup to avoid latency from large external
+        # skill collections. Use `python manage.py embed_skills` for extra dirs.
         import threading
         def _embed_skills():
             try:
                 from agent.skills.embeddings import embed_all_skills
-                embed_all_skills()
+                embed_all_skills(native_only=True)
             except Exception:
                 pass
         threading.Thread(target=_embed_skills, daemon=True).start()

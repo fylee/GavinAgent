@@ -550,6 +550,93 @@ the loop trace. It shows `context_trace` in a readable format:
 
 ---
 
+### Layer 6 — Live agent phase and runtime warnings
+
+The layers above focus on what the agent **decided**. This layer addresses
+what the agent **is doing right now** and surfaces `AgentState` fields that
+have direct user-facing consequences but are currently invisible.
+
+#### 6a. Agent phase enum
+
+Derive a `phase` value from graph state on every polling response and render
+it as a prominent status indicator in both the chat progress block and the
+dashboard run card:
+
+| Phase | Derived from | Display |
+|-------|-------------|---------|
+| `assembling` | `tool_call_rounds == 0`, no `loop_trace` yet | "Assembling context…" |
+| `thinking` | `loop_trace` has a new entry with no tool calls dispatched yet | "Thinking…" (pulsing dots) |
+| `executing` | `ToolExecution` rows exist with `status=RUNNING` | "Executing tools…" |
+| `waiting_approval` | `waiting_for_approval == True` | "Waiting for your approval" (amber, prominent) |
+| `concluding` | Last `loop_trace` entry has `decision="answer"`, no `save_result` yet | "Writing response…" |
+
+The phase replaces the generic "● ● ●" spinner with a description that tells
+the user exactly where the agent is in its cycle. No new DB fields are
+required — phase is computed from existing `graph_state` in the view/template.
+
+#### 6b. `waiting_for_approval` — prominent pause state
+
+Currently `waiting_for_approval` is not visually distinct from "running".
+When `graph_state["waiting_for_approval"] == True`:
+
+- In chat (`_tool_progress.html`): replace the spinner with an amber banner:
+  ```
+  ⏸ Waiting for your approval — N tool call(s) pending review
+  ```
+  The banner links to / scrolls to the approval UI.
+- In dashboard run card (`_run_status.html`): status badge changes to amber
+  "Awaiting approval" (currently it shows the same colour as "Running").
+- The phase indicator (6a) shows `waiting_approval` state.
+
+#### 6c. Round counter with limit warning
+
+Add `tool_call_rounds / AGENT_MAX_TOOL_CALL_ROUNDS` to the round badge:
+
+```
+② Round 2 / 20  ⇉ 3 in parallel
+```
+
+When `tool_call_rounds >= max * 0.75` (i.e. ≥ 15 of 20), render the counter
+in amber as an early warning that `force_conclude` may fire soon.
+
+When `consecutive_failed_rounds == 1` (one away from the limit), show an
+inline warning below the most recent round:
+
+```
+⚠ 1 consecutive failed round — agent may conclude early if next round also fails
+```
+
+Both values are available in `graph_state` / `AgentRun.graph_state` with no
+new DB fields.
+
+#### 6d. Blocked MCP servers
+
+When `graph_state["blocked_mcp_servers"]` is non-empty, render a warning row
+in the context strip (5a) and the context panel (5c):
+
+```
+⚠ MCP servers blocked mid-run: EDWM MCP, Research MCP
+```
+
+This is actionable — the user can check server connectivity. Currently this
+state is silently swallowed and the agent just fails to call those tools.
+
+#### 6e. Run error surfacing
+
+When `AgentRun.status == FAILED` and `graph_state["error"]` is set, render
+the error message explicitly in both chat and dashboard rather than just
+showing a red "Failed" badge:
+
+```
+✕ Run failed: <error message from graph_state["error"]>
+```
+
+Truncate to 200 chars with a "show more" toggle. This replaces the current
+behaviour where users see a red badge but cannot tell what went wrong without
+inspecting the server logs.
+
+---
+
 ## Data Flow (revised)
 
 ```

@@ -13,10 +13,14 @@ logger = logging.getLogger(__name__)
 def _load_skill_bodies(skill_names: list[str]) -> dict[str, str]:
     """Return {skill_name: markdown_body} for each triggered skill."""
     import yaml
-    skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
+    from agent.skills.discovery import collect_all_skills
+    all_skills = {s["name"]: s["skill_dir"] for s in collect_all_skills(check_db_trust=True) if s["trusted"]}
     result = {}
     for name in skill_names:
-        skill_md = skills_dir / name / "SKILL.md"
+        skill_dir = all_skills.get(name)
+        if not skill_dir:
+            continue
+        skill_md = skill_dir / "SKILL.md"
         if not skill_md.exists():
             continue
         text = skill_md.read_text(encoding="utf-8")
@@ -588,14 +592,61 @@ class SkillsView(TemplateView):
 
     def get_context_data(self, **kwargs):
         from agent.skills import registry
+        from agent.skills.discovery import collect_all_skills, all_skill_dirs
+        from agent.models import SkillEmbedding, TrustedSkillSource
+
         ctx = super().get_context_data(**kwargs)
         db_skills_map = {s.name: s for s in Skill.objects.all()}
+
+        # Build set of trusted source dir paths for quick lookup
+        trusted_paths = {
+            str(src.path)
+            for src in all_skill_dirs(check_db_trust=True)
+            if src.trusted
+        }
+
+        # Build embedding status lookup
+        embedded_names = set(SkillEmbedding.objects.values_list("skill_name", flat=True))
+
+        # Collect all discovered skills (including untrusted sources for UI visibility)
+        discovered = collect_all_skills(check_db_trust=True)
+        discovered_map = {s["name"]: s for s in discovered}
+
         skills_with_db = []
+        # Merge registry entries (loaded skills) with discovered (includes untrusted)
+        shown_names: set[str] = set()
         for entry in registry.all().values():
+            info = discovered_map.get(entry.name, {})
+            trusted = str(info.get("source_dir", "")) in trusted_paths or not info
+            embed_status = (
+                "untrusted" if not trusted
+                else ("embedded" if entry.name in embedded_names else "not_embedded")
+            )
             skills_with_db.append({
                 "entry": entry,
                 "db": db_skills_map.get(entry.name),
+                "embed_status": embed_status,
+                "trusted": trusted,
+                "source_dir": str(info.get("source_dir", "")),
             })
+            shown_names.add(entry.name)
+
+        # Also show discovered skills not yet in the registry (from extra dirs)
+        for info in discovered:
+            if info["name"] in shown_names:
+                continue
+            trusted = str(info.get("source_dir", "")) in trusted_paths
+            embed_status = "untrusted" if not trusted else "not_embedded"
+            skills_with_db.append({
+                "entry": None,
+                "db": db_skills_map.get(info["name"]),
+                "embed_status": embed_status,
+                "trusted": trusted,
+                "source_dir": str(info.get("source_dir", "")),
+                "discovered_name": info["name"],
+                "discovered_description": (db_skills_map.get(info["name"]) and db_skills_map[info["name"]].description) or "",
+            })
+
         ctx["skills_with_db"] = skills_with_db
         return ctx
 
@@ -875,6 +926,107 @@ class SkillDeleteView(View):
 
         if request.htmx:
             return HttpResponseClientRedirect("/agent/skills/")
+        return redirect("agent:skills")
+
+
+class SkillEmbedView(View):
+    """POST /agent/skills/<name>/embed/ — embed a single skill and update status badge."""
+
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        from agent.skills.discovery import collect_all_skills
+        from agent.skills.embeddings import _embed_skill_dir
+
+        all_skills = collect_all_skills(check_db_trust=True)
+        skill_info = next((s for s in all_skills if s["name"] == name), None)
+
+        if not skill_info:
+            if request.htmx:
+                return HttpResponse(
+                    f'<span class="text-xs text-red-400">Skill "{name}" not found.</span>'
+                )
+            return redirect("agent:skills")
+
+        if not skill_info["trusted"]:
+            if request.htmx:
+                return HttpResponse(
+                    '<span class="text-xs text-yellow-400">Cannot embed: source not trusted. Approve source first.</span>'
+                )
+            return redirect("agent:skills")
+
+        try:
+            result = _embed_skill_dir(skill_info["skill_dir"])
+            if request.htmx:
+                msg = f'<span class="text-xs text-green-400">✓ Embedded "{name}"</span>' if result \
+                    else f'<span class="text-xs text-gray-400">Unchanged "{name}"</span>'
+                return HttpResponse(msg)
+        except Exception as exc:
+            if request.htmx:
+                return HttpResponse(
+                    f'<span class="text-xs text-red-400">Embed failed: {exc}</span>'
+                )
+
+        return redirect("agent:skills")
+
+
+class SkillApproveSourceView(View):
+    """POST /agent/skills/<name>/approve-source/ — trust the skill's source dir and embed all its skills."""
+
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        from agent.models import TrustedSkillSource
+        from agent.skills.discovery import collect_all_skills, iter_skill_dirs
+        from agent.skills.embeddings import _embed_skill_dir
+
+        all_skills = collect_all_skills(check_db_trust=False)
+        skill_info = next((s for s in all_skills if s["name"] == name), None)
+
+        if not skill_info:
+            if request.htmx:
+                return HttpResponse(
+                    f'<span class="text-xs text-red-400">Skill "{name}" not found.</span>'
+                )
+            return redirect("agent:skills")
+
+        source_dir = str(skill_info["source_dir"])
+        username = request.user.username if request.user.is_authenticated else "system"
+        TrustedSkillSource.objects.get_or_create(
+            path=source_dir,
+            defaults={"approved_by": username},
+        )
+
+        # Embed all skills from the newly trusted directory
+        embedded: list[str] = []
+        for skill_dir in iter_skill_dirs(skill_info["source_dir"]):
+            try:
+                result = _embed_skill_dir(skill_dir)
+                if result:
+                    embedded.append(result)
+            except Exception as exc:
+                logger.warning("Failed to embed skill %s after source approval: %s", skill_dir.name, exc)
+
+        if request.htmx:
+            n = len(embedded)
+            return HttpResponse(
+                f'<span class="text-xs text-green-400">✓ Source approved. Embedded {n} skill(s).</span>'
+            )
+        return redirect("agent:skills")
+
+
+class SkillEmbedAllView(View):
+    """POST /agent/skills/embed-all/ — re-embed all skills from all trusted dirs."""
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        from agent.skills.embeddings import embed_all_skills
+
+        try:
+            processed = embed_all_skills(native_only=False, force=False)
+            msg = f"Re-embedded {len(processed)} skill(s)."
+        except Exception as exc:
+            msg = f"Error during re-embed: {exc}"
+
+        if request.htmx:
+            return HttpResponse(
+                f'<span class="text-xs text-green-400">{msg}</span>'
+            )
         return redirect("agent:skills")
 
 

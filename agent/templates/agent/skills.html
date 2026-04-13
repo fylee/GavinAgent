@@ -25,8 +25,20 @@
           Reload skills
         </button>
       </form>
+      <form method="post" action="{% url 'agent:skill-embed-all' %}">
+        {% csrf_token %}
+        <button type="submit"
+                hx-post="{% url 'agent:skill-embed-all' %}"
+                hx-target="#embed-all-status"
+                hx-swap="innerHTML"
+                class="text-xs px-3 py-1.5 rounded-lg border border-blue-700/60 text-blue-300 hover:bg-blue-900/40 transition-colors">
+          ↺ Re-embed All
+        </button>
+      </form>
     </div>
   </div>
+
+  <div id="embed-all-status" class="text-xs text-gray-400 min-h-[1rem]"></div>
 
   {# Author with Claude modal #}
   <div x-show="authorOpen" x-cloak

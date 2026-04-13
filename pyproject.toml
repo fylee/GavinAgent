@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mcp_server = "mcp_server:mcp.run"
+mcp-server = "mcp_server:main"
 
 [dependency-groups]
 dev = [

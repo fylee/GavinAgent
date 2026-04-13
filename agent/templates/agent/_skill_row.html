@@ -29,13 +29,13 @@
 
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2 mb-1 flex-wrap">
-        <span class="text-sm font-medium text-white">{{ entry.name }}</span>
-        {% if entry.approval_required %}
+        <span class="text-sm font-medium text-white">{% if entry %}{{ entry.name }}{% else %}{{ discovered_name }}{% endif %}</span>
+        {% if entry and entry.approval_required %}
         <span class="text-xs px-2 py-0.5 rounded-full bg-yellow-900 text-yellow-300">approval required</span>
-        {% else %}
+        {% elif entry %}
         <span class="text-xs px-2 py-0.5 rounded-full bg-green-900 text-green-300">auto</span>
         {% endif %}
-        {% if entry.handler %}
+        {% if entry and entry.handler %}
         <span class="text-xs px-2 py-0.5 rounded-full bg-blue-900 text-blue-300">has handler</span>
         {% endif %}
         {% if db %}
@@ -45,25 +45,59 @@
           <span class="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">disabled</span>
           {% endif %}
         {% endif %}
+        {# Spec 023: embedding status badge #}
+        {% if embed_status == "embedded" %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-teal-900/60 text-teal-300" title="Has an embedding — will be found by semantic search">embedded</span>
+        {% elif embed_status == "not_embedded" %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-orange-900/60 text-orange-300" title="No embedding — will not be found by semantic search">not embedded</span>
+        {% elif embed_status == "untrusted" %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-red-900/60 text-red-300" title="Source directory not yet approved — skill is invisible to the agent">untrusted</span>
+        {% endif %}
       </div>
-      <p class="text-sm text-gray-400">{{ entry.description }}</p>
-      <p class="text-xs text-gray-600 mt-1 font-mono">{{ entry.path }}</p>
+      <p class="text-sm text-gray-400">{% if entry %}{{ entry.description }}{% else %}{{ discovered_description }}{% endif %}</p>
+      <p class="text-xs text-gray-600 mt-1 font-mono">{% if entry %}{{ entry.path }}{% endif %}</p>
     </div>
 
-    <div class="flex-shrink-0 flex items-center gap-3">
-      {% if entry.instructions %}
+    <div class="flex-shrink-0 flex items-center gap-3" id="skill-action-{{ entry.name|default:discovered_name }}">
+      {% if entry and entry.instructions %}
       <button @click="expanded = !expanded"
               class="text-xs text-gray-400 hover:text-white transition-colors"
               x-text="expanded ? 'Hide' : 'Instructions'"></button>
       {% endif %}
+      {# Spec 023: Embed button — disabled for untrusted skills #}
+      {% if embed_status == "untrusted" %}
+      <span class="text-xs text-gray-600 cursor-not-allowed" title="Approve source first">Embed</span>
+      {% else %}
+      <form method="post"
+            action="{% url 'agent:skill-embed' name=entry.name|default:discovered_name %}"
+            hx-post="{% url 'agent:skill-embed' name=entry.name|default:discovered_name %}"
+            hx-target="#skill-action-{{ entry.name|default:discovered_name }}"
+            hx-swap="innerHTML">
+        {% csrf_token %}
+        <button type="submit" class="text-xs text-blue-400 hover:text-blue-300 transition-colors">Embed</button>
+      </form>
+      {% endif %}
+      {# Spec 023: Approve Source button — only for untrusted skills #}
+      {% if embed_status == "untrusted" %}
+      <form method="post"
+            action="{% url 'agent:skill-approve-source' name=entry.name|default:discovered_name %}"
+            hx-post="{% url 'agent:skill-approve-source' name=entry.name|default:discovered_name %}"
+            hx-target="#skill-action-{{ entry.name|default:discovered_name }}"
+            hx-swap="innerHTML">
+        {% csrf_token %}
+        <button type="submit" class="text-xs text-yellow-400 hover:text-yellow-300 transition-colors">Approve Source</button>
+      </form>
+      {% endif %}
+      {% if entry %}
       <a href="{% url 'agent:skill-edit' name=entry.name %}"
          class="text-xs text-gray-400 hover:text-white transition-colors">Edit</a>
       <a href="{% url 'agent:skill-delete' name=entry.name %}"
          class="text-xs text-red-400 hover:text-red-300 transition-colors">Delete</a>
+      {% endif %}
     </div>
   </div>
 
-  {% if entry.instructions %}
+  {% if entry and entry.instructions %}
   <div x-show="expanded" class="border-t border-white/10 px-5 py-4">
     <pre class="text-xs text-gray-300 whitespace-pre-wrap font-mono">{{ entry.instructions }}</pre>
   </div>

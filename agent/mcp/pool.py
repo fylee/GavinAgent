@@ -18,6 +18,20 @@ from .registry import MCPToolEntry, get_registry
 logger = logging.getLogger(__name__)
 
 
+def _is_session_dead_error(exc: Exception) -> bool:
+    """Return True if the exception indicates an expired or closed MCP session."""
+    exc_type = type(exc).__name__
+    if exc_type in ("ClosedResourceError", "EndOfStream", "BrokenResourceError"):
+        return True
+    try:
+        import anyio
+        if isinstance(exc, (anyio.ClosedResourceError, anyio.EndOfStream)):
+            return True
+    except (ImportError, AttributeError):
+        pass
+    return False
+
+
 class MCPConnectionPool:
     """
     Process-level singleton that manages all MCP server connections.
@@ -272,19 +286,56 @@ class MCPConnectionPool:
         for name in names:
             await self._stop_server_async(name)
 
+    async def _reconnect_server_async(self, server_name: str) -> None:
+        """Stop and restart a server whose SSE session has expired."""
+        logger.info("MCP %s: session dead — reconnecting", server_name)
+        await self._stop_server_async(server_name)
+        try:
+            from asgiref.sync import sync_to_async
+            from agent.models import MCPServer
+            server = await sync_to_async(
+                lambda: MCPServer.objects.get(name=server_name)
+            )()
+            await self._start_server_async(server)
+        except Exception as exc:
+            logger.error("MCP %s: reconnect failed: %s", server_name, exc)
+            raise
+
     async def _call_tool_async(self, server_name: str, tool_name: str, args: dict) -> dict:
         conn = self._connections.get(server_name)
         if conn is None or conn.session is None:
             raise MCPTimeoutError(f"No active connection to MCP server: {server_name}")
-        result = await conn.session.call_tool(tool_name, args)
-        return {"content": extract_tool_content(result)}
+        try:
+            result = await conn.session.call_tool(tool_name, args)
+            return {"content": extract_tool_content(result)}
+        except Exception as exc:
+            if not _is_session_dead_error(exc):
+                raise
+            logger.warning("MCP %s: %s — reconnecting and retrying", server_name, type(exc).__name__)
+            await self._reconnect_server_async(server_name)
+            conn = self._connections.get(server_name)
+            if conn is None or conn.session is None:
+                raise MCPTimeoutError(f"MCP {server_name}: reconnect succeeded but session unavailable")
+            result = await conn.session.call_tool(tool_name, args)
+            return {"content": extract_tool_content(result)}
 
     async def _read_resource_async(self, server_name: str, uri: str) -> str:
         conn = self._connections.get(server_name)
         if conn is None or conn.session is None:
             raise MCPTimeoutError(f"No active connection to MCP server: {server_name}")
-        result = await conn.session.read_resource(uri)
-        return extract_resource_content(result)
+        try:
+            result = await conn.session.read_resource(uri)
+            return extract_resource_content(result)
+        except Exception as exc:
+            if not _is_session_dead_error(exc):
+                raise
+            logger.warning("MCP %s: %s on read_resource — reconnecting and retrying", server_name, type(exc).__name__)
+            await self._reconnect_server_async(server_name)
+            conn = self._connections.get(server_name)
+            if conn is None or conn.session is None:
+                raise MCPTimeoutError(f"MCP {server_name}: reconnect succeeded but session unavailable")
+            result = await conn.session.read_resource(uri)
+            return extract_resource_content(result)
 
     async def _refresh_server_async(self, server_name: str) -> None:
         conn = self._connections.get(server_name)

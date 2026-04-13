@@ -200,6 +200,10 @@ class ToolExecution(TimeStampedModel):
     # (file_write, shell_exec) have is_serial=True and their own group.
     parallel_group = models.CharField(max_length=8, blank=True, default="")
     is_serial = models.BooleanField(default=False)
+    # Which agent loop round this TE belongs to (1-based, matches loop_trace[n].round).
+    round = models.IntegerField(null=True, blank=True)
+    # Why this tool was approved or queued: auto_workflow | auto_approve_list | policy_allow | requires_human | rejected
+    approval_reason = models.CharField(max_length=40, blank=True, default="")
 
     class Meta:
         ordering = ["-created_at"]
@@ -236,11 +240,43 @@ class Skill(TimeStampedModel):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
     path = models.CharField(max_length=500)
+    # Resolved absolute path of the source directory that contains this skill.
+    # Native skills: agent/workspace/skills/; external: .agents/skills/ etc.
+    source_dir = models.CharField(max_length=500, blank=True)
     enabled = models.BooleanField(default=True)
     installed_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.name
+
+
+class TrustedSkillSource(TimeStampedModel):
+    """
+    Records operator approval for a skill source directory (Spec 023).
+
+    The native agent/workspace/skills/ is always trusted and never needs a record.
+    Standard dirs (.agents/skills/, ~/.agents/skills/, ~/.claude/skills/) and
+    AGENT_EXTRA_SKILLS_DIRS entries require this record before their skills are
+    embedded or injected into the LLM context.
+    """
+
+    path = models.CharField(
+        max_length=500,
+        unique=True,
+        help_text="Resolved absolute path to the trusted skill source directory.",
+    )
+    approved_by = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='Username or "system" for auto-approved entries.',
+    )
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["path"]
+
+    def __str__(self) -> str:
+        return f"TrustedSkillSource({self.path})"
 
 
 class LLMUsage(TimeStampedModel):

@@ -69,6 +69,12 @@ from django.db import connection
 cursor = connection.cursor()  # only with documented justification
 ```
 
+## Skills
+
+- All skills live in `agent/workspace/skills/<name>/SKILL.md` — this is the **source of truth**
+- After editing a skill, run `uv run python manage.py sync_claude_code --skills-only` to push changes to `~/.claude/skills/`
+- **Never edit `~/.claude/skills/` directly** — changes will be overwritten on the next sync
+
 ## Specs and Documentation
 
 - Major features must have a spec in `.spec/` before implementation

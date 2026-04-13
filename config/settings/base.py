@@ -143,6 +143,18 @@ AGENT_SKILL_SIMILARITY_THRESHOLD = config(
     "AGENT_SKILL_SIMILARITY_THRESHOLD", default=0.35, cast=float
 )
 
+# Spec 023: Multi-source skill discovery
+# Extra skill directories scanned in addition to agent/workspace/skills/.
+# Format: comma-separated absolute paths.
+from decouple import Csv as _Csv
+AGENT_EXTRA_SKILLS_DIRS = config("AGENT_EXTRA_SKILLS_DIRS", default="", cast=_Csv())
+
+# Whether to auto-scan standard agentskills.io directories:
+# .agents/skills/, ~/.agents/skills/, ~/.claude/skills/
+AGENT_SCAN_STANDARD_SKILL_DIRS = config(
+    "AGENT_SCAN_STANDARD_SKILL_DIRS", default=True, cast=bool
+)
+
 # Maximum tool-call rounds per agent run before force-concluding
 AGENT_MAX_TOOL_CALL_ROUNDS = config("AGENT_MAX_TOOL_CALL_ROUNDS", default=20, cast=int)
 
