@@ -120,9 +120,12 @@ This avoids the multi-round investigation seen when the date filter returns 0 ro
 
 ### When EDWM tools are not in your tool list
 
-Check the **MCP Server Status** section of your system context for the `edwm` server:
+**Step 1 — Check your actual tool list first.**
+Look at the tools available to you in this session. If you can see `edwm__execute_query` or any other `edwm__*` tool, **use it immediately** — do not consult the MCP status section. The status section is only a fallback for when `edwm__*` tools are genuinely absent.
 
-- **"connected — N tools available"** — tools are loaded; you should see `edwm__*` in your tool list. If you don't, there may be a name mismatch — check available tools.
+**Step 2 — Only if `edwm__*` tools are absent**, check the **MCP Server Status** section of your system context for the `edwm` server:
+
+- **"connected — N tools available"** — tools are registered but may not have propagated yet. Try calling `edwm__execute_query` directly; if it works, proceed. If it fails, treat as "tools loading".
 - **"connected — tools loading"** — the server just restarted; tools haven't populated yet. Tell the user: *"EDWM is connecting, please retry in ~15 seconds."* Do NOT say "not connected".
 - **"disconnected"** — the server is genuinely offline. Tell the user to reconnect via GavinAgent → MCP settings.
 - **Status section absent** — treat as disconnected.
@@ -132,6 +135,7 @@ Check the **MCP Server Status** section of your system context for the `edwm` se
 - Offer to chart "cached data" — you have no cached EDWM data
 - Ask the user clarifying questions before explaining the problem
 - Tell the user to "open MCP settings" if the status shows "tools loading" — just ask them to retry
+- Refuse to call EDWM tools based on the MCP status section alone — always check your actual tool list first
 
 ---
 

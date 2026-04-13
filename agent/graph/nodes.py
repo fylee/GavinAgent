@@ -306,7 +306,9 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]
             parts.append(
                 "## MCP Server Status\n\n"
                 + "\n".join(mcp_lines)
-                + "\n\nIf a required server shows 'tools loading', wait 10–30 seconds and retry. "
+                + "\n\nIf a required server shows 'tools loading', check your tool list first — "
+                "the tools may already be available even before this status updates. "
+                "Only tell the user to wait if the tools are genuinely absent from your tool list. "
                 "If it shows 'disconnected', ask the user to reconnect it via GavinAgent MCP settings."
             )
     except Exception:
