@@ -708,6 +708,8 @@ def call_llm(state: AgentState) -> dict:
             "tool_wall_ms": None,
             "tool_count": 0,
             "forced": False,
+            # Unix timestamp (float) when this round started — used to compute cumulative elapsed
+            "ts": timezone.now().timestamp(),
         }
         loop_trace.append(trace_entry)
 
@@ -766,6 +768,7 @@ def call_llm(state: AgentState) -> dict:
         "tool_wall_ms": None,
         "tool_count": 0,
         "forced": False,
+        "ts": timezone.now().timestamp(),
     }
     loop_trace.append(trace_entry)
 
@@ -1387,6 +1390,7 @@ def force_conclude(state: AgentState) -> dict:
                 "tool_wall_ms": None,
                 "tool_count": 0,
                 "forced": True,
+                "ts": timezone.now().timestamp(),
             })
         _gs3["loop_trace"] = _trace3
         _AR3.objects.filter(pk=state["run_id"]).update(graph_state=_gs3)

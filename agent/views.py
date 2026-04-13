@@ -113,9 +113,13 @@ def _build_run_context(run, request=None) -> dict:
 
     # Embed tool executions inside each loop_trace entry
     loop_trace_with_tes = []
+    run_started_ts = run.started_at.timestamp() if run.started_at else None
     for entry in loop_trace:
         round_num = entry.get("round", 0)
-        loop_trace_with_tes.append({**entry, "tool_executions": te_by_round.get(round_num, [])})
+        elapsed_s = None
+        if run_started_ts and entry.get("ts"):
+            elapsed_s = round(entry["ts"] - run_started_ts, 1)
+        loop_trace_with_tes.append({**entry, "tool_executions": te_by_round.get(round_num, []), "elapsed_s": elapsed_s})
 
     max_rounds = getattr(_settings, "AGENT_MAX_TOOL_CALL_ROUNDS", 20)
     max_consec = getattr(_settings, "AGENT_MAX_CONSECUTIVE_FAILED_ROUNDS", 2)

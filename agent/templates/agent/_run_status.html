@@ -282,6 +282,9 @@
           {% if max_tool_call_rounds %}
           <span class="text-[10px] text-gray-600">/ {{ max_tool_call_rounds }}</span>
           {% endif %}
+          {% if entry.elapsed_s is not None %}
+          <span class="text-[10px] text-gray-500">+{{ entry.elapsed_s }}s</span>
+          {% endif %}
           {% if entry.parallel_count and entry.parallel_count > 1 %}
           <span class="text-[10px] text-violet-400 font-semibold">⇉ {{ entry.parallel_count }} in parallel</span>
           {% endif %}
@@ -292,6 +295,9 @@
           <span class="text-xs {% if entry.forced %}text-red-400{% else %}text-green-400{% endif %}">
             {% if entry.forced %}⚠ Forced conclusion{% else %}💬 Final answer{% endif %}
           </span>
+          {% if entry.elapsed_s is not None %}
+          <span class="text-[10px] text-gray-500">+{{ entry.elapsed_s }}s</span>
+          {% endif %}
           {% endif %}
 
           {# Tool names for tool_call rounds #}
