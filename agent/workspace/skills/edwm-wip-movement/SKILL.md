@@ -127,13 +127,18 @@ Look at the tools available to you in this session. If you can see `edwm__execut
 
 - **"connected — N tools available"** — tools are registered but may not have propagated yet. Try calling `edwm__execute_query` directly; if it works, proceed. If it fails, treat as "tools loading".
 - **"connected — tools loading"** — the server just restarted; tools haven't populated yet. Tell the user: *"EDWM is connecting, please retry in ~15 seconds."* Do NOT say "not connected".
-- **"disconnected"** — the server is genuinely offline. Tell the user to reconnect via GavinAgent → MCP settings.
+- **"disconnected"** — the server is genuinely offline. Use the **exact** response template below. Do not add SQL, plans, or clarifying questions.
 - **Status section absent** — treat as disconnected.
 
+**Disconnected response template** (use verbatim, fill in `[FAB]` and `[period]` from the user's request):
+> EDWM MCP is not connected — I can't query [FAB] movement data right now.
+> Please reconnect it via **GavinAgent → MCP settings**, then ask me again and I'll run the query immediately.
+
 **Do NOT:**
+- Show SQL, execution plans, or "what I will run once connected" — that's noise while the user is blocked
+- Ask clarifying questions (P+PE combined? CT only?) — answer those after reconnection when you can actually run the query
 - Say "the skill handler isn't available" — this confuses skill handlers with MCP
 - Offer to chart "cached data" — you have no cached EDWM data
-- Ask the user clarifying questions before explaining the problem
 - Tell the user to "open MCP settings" if the status shows "tools loading" — just ask them to retry
 - Refuse to call EDWM tools based on the MCP status section alone — always check your actual tool list first
 
