@@ -655,11 +655,12 @@ class SkillInstallView(View):
     def post(self, request: HttpRequest) -> HttpResponse:
         from agent.skills.loader import SkillLoader
         from agent.skills import registry
-        from pathlib import Path
+        from agent.skills.discovery import all_skill_dirs
 
-        skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
-        loader = SkillLoader(skills_dir)
-        loaded = loader.load_all(registry)
+        loaded: list[str] = []
+        for src in all_skill_dirs(check_db_trust=False):
+            loader = SkillLoader(src.path)
+            loaded.extend(loader.load_all(registry))
 
         # Sync to DB
         for name in loaded:
