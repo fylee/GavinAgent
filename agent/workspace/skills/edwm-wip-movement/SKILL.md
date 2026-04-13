@@ -118,6 +118,29 @@ This avoids the multi-round investigation seen when the date filter returns 0 ro
 
 ---
 
+### When EDWM tools are not in your tool list
+
+If you cannot see any `edwm__*` tools in your available tool list, the EDWM MCP
+server is not connected. This is different from a session expiry (below).
+
+**Do NOT:**
+- Say "the skill handler isn't available" — this confuses skill handlers with MCP
+- Offer to chart "cached data" — you have no cached EDWM data
+- Ask the user clarifying questions before explaining the problem
+
+**Do:**
+Tell the user immediately and clearly:
+
+> "The EDWM MCP server is not connected in this session, so I cannot query
+> EDWM data. Please connect it first:
+> 1. Open the MCP settings in GavinAgent (sidebar → MCP)
+> 2. Verify the EDWM MCP server status shows **Connected**
+> 3. Once connected, re-send your request and I will execute it immediately."
+
+Then stop. Do not offer alternatives or ask questions.
+
+---
+
 ### MCP connection error handling
 
 EDWM MCP uses SSE transport with server-side session management. Sessions can expire mid-conversation, causing all tool calls to fail silently with a misleading error code.
