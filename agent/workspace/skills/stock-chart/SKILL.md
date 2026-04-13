@@ -1,24 +1,12 @@
 ---
 name: stock-chart
-description: >
-  Fetch historical stock prices and generate a line chart. Supports any ticker
-  symbol on Yahoo Finance. Always use this skill instead of web_read or
-  web_search for stock price queries that need a chart.
-approval_required: false
-tools: [run_skill]
-triggers:
-  - stock price
-  - stock chart
-  - share price
-  - ticker
-  - 股價
-  - 股票
-examples:
-  - "what is TSMC's stock price in the past 5 days and draw a chart?"
-  - "show me Apple's stock chart for the last month"
-  - "draw a chart of NVDA stock price over 30 days"
-  - "華邦電股價走勢"
-  - "compare AAPL and MSFT stock prices"
+description: Fetch historical stock prices and generate a line chart. Supports any ticker symbol on Yahoo Finance. Always use this skill instead of web_read or web_search for stock price queries that need a chart.
+allowed-tools: Bash
+compatibility: Requires internet access to Yahoo Finance
+metadata:
+  triggers: "stock price | stock chart | share price | ticker | 股價 | 股票"
+  examples: "what is TSMC's stock price in the past 5 days and draw a chart? | show me Apple's stock chart for the last month | draw a chart of NVDA stock price over 30 days | 華邦電股價走勢 | compare AAPL and MSFT stock prices"
+  version: "1"
 ---
 
 ## How to use

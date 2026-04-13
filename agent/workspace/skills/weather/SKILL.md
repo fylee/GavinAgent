@@ -1,16 +1,11 @@
 ---
 name: weather
 description: Get current weather and today's forecast for one or more cities. Returns temperature, conditions, wind, humidity, and UV index. Always use this skill instead of web_read for weather queries.
-approval_required: false
-tools: [run_skill]
-examples:
-  - "what's the weather in Taipei?"
-  - "current temperature in Tokyo"
-  - "weather forecast for New York"
-  - "is it raining in London?"
-  - "humidity in Hong Kong today"
-  - "wind speed in Kaohsiung"
-  - "UV index in Tainan"
+allowed-tools: Bash
+compatibility: Requires internet access to Open-Meteo API
+metadata:
+  examples: "what's the weather in Taipei? | current temperature in Tokyo | weather forecast for New York | is it raining in London? | humidity in Hong Kong today | wind speed in Kaohsiung | UV index in Tainan"
+  triggers: "weather | forecast | temperature | humidity | wind | UV index | rain | sunny | climate"
 ---
 
 ## How to use

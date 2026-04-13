@@ -78,10 +78,15 @@ Write a SKILL.md file at this EXACT path (create it now):
 2. If this is a data skill (SQL/API), derive correct column names, filter values,
    and query patterns from the task description and your knowledge.
 3. Write the complete SKILL.md to {skill_path} right now.
-4. Follow the YAML frontmatter schema exactly.
-5. Do NOT put Chinese or non-ASCII text in the YAML frontmatter triggers/examples lists.
-6. Save the file as UTF-8 without BOM.
-7. Output a single line when done: SKILL_WRITTEN: <skill_name>
+4. Follow the agentskills.io spec-compliant frontmatter schema exactly:
+   - Top-level keys ONLY: `name`, `description`, `allowed-tools`, `compatibility`, `metadata`
+   - Do NOT write top-level `triggers`, `examples`, `version`, `approval_required`, or `tools`
+   - GavinAgent extensions go inside `metadata` as pipe-separated strings:
+     `metadata.triggers`, `metadata.examples`, `metadata.version`
+5. The `description` must be 80–300 chars describing BOTH what the skill does AND when to use it.
+6. Do NOT put Chinese or non-ASCII text in the YAML frontmatter (metadata values included).
+7. Save the file as UTF-8 without BOM.
+8. Output a single line when done: SKILL_WRITTEN: <skill_name>
 
 Start writing now.
 """
@@ -111,11 +116,25 @@ Current SKILL.md content:
 
 ## Review checklist
 
-1. YAML frontmatter: valid schema, no non-ASCII in flow sequences, version is an integer
-2. SQL/API patterns: column names, table names, filter values correct and specific?
-3. Missing guards: is there a "Do NOT use" or "WARNING" section for known wrong approaches?
-4. Search strategy: specific enough for the agent to use without scatter-searching?
-5. Examples: do the trigger examples match real user requests?
+1. **Spec compliance (agentskills.io):**
+   - Only spec-defined top-level keys: `name`, `description`, `allowed-tools`, `compatibility`, `license`, `metadata`
+   - NO top-level `triggers`, `examples`, `version`, `approval_required`, or `tools` keys
+   - `metadata` values must be strings (pipe-separated, not YAML lists or booleans)
+   - `name` matches the skill directory name; lowercase, hyphens only
+
+2. **Description quality:**
+   - Must be 80–300 characters
+   - Must describe BOTH what the skill does AND when to use it
+   - Must include domain-specific keywords that help agents identify relevance
+
+3. **Routing quality (GavinAgent):**
+   - `metadata.triggers` covers the main vocabulary a user would use for this skill
+   - `metadata.examples` includes realistic user requests that should trigger this skill
+
+4. **Body quality:**
+   - Has a "Do NOT use" or "WARNING" section for known wrong approaches
+   - SQL/API patterns have correct column names, table names, and filter values
+   - Search strategy is specific (numbered steps, no scatter-searching)
 
 Output the two sections now. Nothing before === Recommand === and nothing after the suggested version content.
 """

@@ -1,8 +1,9 @@
 ---
 name: data-analysis
-description: Processing tabular data, statistics, and comparisons
-triggers: [analys, data, statistic, calculate, compute, average, sum, rank, filter, compare, dataset, table, csv, excel, number, count, percentage, total]
-version: 1
+description: Analyse tabular data, compute statistics, rank and filter datasets. Use when the user asks to calculate, compare, aggregate, or summarise numerical data from a table, CSV, query result, or dataset.
+metadata:
+  triggers: "analys | data | statistic | calculate | compute | average | sum | rank | filter | compare | dataset | table | csv | excel | number | count | percentage | total"
+  version: "1"
 ---
 
 ## Data Analysis

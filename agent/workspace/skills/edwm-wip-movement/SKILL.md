@@ -1,14 +1,11 @@
 ---
 name: edwm-wip-movement
-description: EDWM WIP and Movement/Move queries for CT (Taichung) and KH (Kaohsiung) FAB - table selection, real column names, and prod_move conventions
-triggers: [wip, movement, move, lot_move, wafer_move, step_move, mvmt, fab move, daily move, shift move, taichung move, ct move, ct wip, kh move, kh wip, kaohsiung move]
-examples:
-  - "search EDWM for movement yesterday in Taichung FAB"
-  - "Taichung CT daily wafer move by lot_type"
-  - "CT FAB prod_move yesterday"
-  - "sum_step_move_prod yesterday Taichung"
-  - "KH FAB movement last 7 days"
-version: 3
+description: Query EDWM WIP and movement data for CT (Taichung) and KH (Kaohsiung) FAB. Use for fab production move counts, lot movement queries, and daily move summaries.
+compatibility: Requires EDWM MCP server (SSE transport)
+metadata:
+  triggers: "wip | movement | move | lot_move | wafer_move | step_move | mvmt | fab move | daily move | shift move | taichung move | ct move | ct wip | kh move | kh wip | kaohsiung move"
+  examples: "search EDWM for movement yesterday in Taichung FAB | Taichung CT daily wafer move by lot_type | CT FAB prod_move yesterday | sum_step_move_prod yesterday Taichung | KH FAB movement last 7 days"
+  version: "5"
 ---
 
 ## EDWM WIP / Movement Queries ??CT (Taichung) & KH (Kaohsiung) FAB
@@ -122,3 +119,30 @@ data dictionary with many individual keywords. Instead:
 3. Write and execute the Trino SQL **in one round** using the confirmed column names above.
 
 This avoids the multi-round investigation seen when the date filter returns 0 rows.
+
+---
+
+### MCP connection error handling
+
+EDWM MCP uses SSE transport with server-side session management. Sessions can expire mid-conversation, causing all tool calls to fail silently with a misleading error code.
+
+**Error signatures that indicate a dead session (not a SQL problem):**
+
+| Error | Meaning |
+|-------|---------|
+| `MCP error -32602: Invalid request parameters` | Session expired server-side; `-32602` is mis-used as a catch-all |
+| `ClosedResourceError` | SSE stream was closed by the server |
+
+**How to confirm it's a session issue, not a SQL issue:**
+- Call `get_current_date` (no parameters). If it also returns `-32602`, the session is dead — it cannot be a parameter problem.
+
+**Recovery steps (Claude cannot auto-reconnect — no CLI restart command exists):**
+
+1. Tell the user: "EDWM MCP session has expired. Please reconnect:"
+   ```
+   Option A: Restart Claude Code — the only reliable fix; forces a fresh SSE handshake
+   Option B: Click the MCP icon in Claude Code → reconnect EDWM MCP (if available in your version)
+   ```
+   > Do NOT suggest `! claude mcp list` — it only pings the SSE endpoint and does not re-establish the session.
+2. After the user confirms reconnection, **retry the original query immediately** — do not ask the user to repeat themselves.
+3. If the session keeps expiring mid-conversation, ask the EDWM MCP admin to increase the server-side SSE session timeout.

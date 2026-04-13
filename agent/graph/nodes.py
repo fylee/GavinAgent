@@ -88,8 +88,19 @@ def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
 
         name = meta.get("name", skill_dir.name)
         description = meta.get("description", "")
-        triggers: list[str] = meta.get("triggers", [])
-        trigger_patterns: list[str] = meta.get("trigger_patterns", [])
+
+        # Spec 021: GavinAgent extension fields live in metadata (pipe-separated strings).
+        # Legacy top-level lists are also accepted for backwards compatibility.
+        from agent.skills.embeddings import _parse_metadata_list
+        nested_meta = meta.get("metadata", {}) or {}
+        triggers: list[str] = (
+            _parse_metadata_list(nested_meta, "triggers")
+            or _parse_metadata_list(meta, "triggers")
+        )
+        trigger_patterns: list[str] = (
+            _parse_metadata_list(nested_meta, "trigger_patterns")
+            or _parse_metadata_list(meta, "trigger_patterns")
+        )
 
         # Embedding match (primary)
         match_reason: str | None = None

@@ -1,8 +1,9 @@
 ---
 name: web-research
-description: Searching the web, fetching URLs, and finding current information
-triggers: [search, web, browse, look up, latest, current news, recent news, fetch url, wikipedia, price, population, statistic, what is the latest, find information, what happened, what happens, market, stock, news, event, report, update, trend, how much, who is, where is, when did, why did]
-version: 1
+description: Search the web and fetch URLs for current information. Use when the user asks about recent events, prices, statistics, news, or anything that changes over time and may not be in training data.
+metadata:
+  triggers: "search | web | browse | look up | latest | current news | recent news | fetch url | wikipedia | price | population | statistic | what is the latest | find information | what happened | market | stock | news | event | report | update | trend | how much | who is | where is | when did | why did"
+  version: "1"
 ---
 
 ## Web Research

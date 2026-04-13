@@ -1,9 +1,10 @@
 ---
 name: charts
-description: Generating charts and data visualisations
-triggers: [chart, graph, plot, visuali, bar chart, pie chart, line chart, scatter]
-tools: [chart]
-version: 1
+description: Generate bar, line, pie, and scatter charts from data. Use when visualising data would help the user understand results better than a text table, or when the user explicitly asks for a chart, graph, or plot.
+allowed-tools: Bash
+metadata:
+  triggers: "chart | graph | plot | visuali | bar chart | pie chart | line chart | scatter"
+  version: "1"
 ---
 
 ## Charts
