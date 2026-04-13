@@ -798,13 +798,32 @@ class SkillToggleView(View):
         skill_db.save(update_fields=["enabled"])
 
         from agent.skills import registry
+        from agent.skills.discovery import all_skill_dirs
+        from agent.models import SkillEmbedding
         entry = registry.get(name)
 
         if request.htmx:
+            trusted_paths = {
+                str(src.path)
+                for src in all_skill_dirs(check_db_trust=True)
+                if src.trusted
+            }
+            embedded_names = set(SkillEmbedding.objects.values_list("skill_name", flat=True))
+            trusted = entry is not None  # registered entries are always from trusted sources
+            embed_status = (
+                "embedded" if name in embedded_names
+                else "not_embedded"
+            ) if trusted else "untrusted"
             return render(
                 request,
                 "agent/_skill_row.html",
-                {"entry": entry, "db": skill_db},
+                {
+                    "entry": entry,
+                    "db": skill_db,
+                    "embed_status": embed_status,
+                    "trusted": trusted,
+                    "source_dir": str(entry.path) if entry else "",
+                },
             )
         return redirect("agent:skills")
 

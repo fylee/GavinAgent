@@ -98,7 +98,7 @@
 
   <div class="space-y-3">
     {% for item in skills_with_db %}
-    {% include "agent/_skill_row.html" with entry=item.entry db=item.db %}
+    {% include "agent/_skill_row.html" with entry=item.entry db=item.db embed_status=item.embed_status trusted=item.trusted source_dir=item.source_dir discovered_name=item.discovered_name discovered_description=item.discovered_description only %}
     {% empty %}
     <p class="text-gray-500 text-sm">
       No skills loaded. Create a directory in
