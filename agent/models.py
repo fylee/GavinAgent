@@ -360,6 +360,31 @@ class MCPServer(TimeStampedModel):
     # Resource URIs to inject into every agent run's system context
     always_include_resources = models.JSONField(default=list, blank=True)
 
+    # Spec 024: JSON-RPC error codes that indicate server-side session expiry.
+    # e.g. [-32602] for EDWM MCP which reuses "Invalid params" as a catch-all.
+    # Leave empty for servers that use transport-level errors (Pattern A) only.
+    session_dead_error_codes = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "JSON-RPC error codes that indicate server-side session expiry "
+            "(e.g. [-32602]). Leave empty if the server uses transport-level "
+            "disconnect errors only."
+        ),
+    )
+
+    # Spec 024: no-param tool used to probe whether a session is alive.
+    # Required when session_dead_error_codes is set — without a probe the pool
+    # cannot distinguish a dead session from a real parameter error.
+    health_probe_tool = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text=(
+            "Tool name with no required parameters used to probe session health "
+            "(e.g. get_current_date). Used together with session_dead_error_codes."
+        ),
+    )
+
     connection_status = models.CharField(
         max_length=20,
         choices=ConnectionStatus.choices,

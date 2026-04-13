@@ -97,6 +97,26 @@
       <p class="text-xs text-gray-600 mt-1">Comma-separated resource URIs injected into every system prompt.</p>
     </div>
 
+    {# Session dead error codes (Spec 024) #}
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Session-dead error codes</label>
+      <input type="text" name="session_dead_error_codes"
+             value="{% if server %}{{ server.session_dead_error_codes|join:', ' }}{% endif %}"
+             placeholder="-32602"
+             class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm font-mono focus:outline-none focus:border-blue-500/60">
+      <p class="text-xs text-gray-600 mt-1">Comma-separated JSON-RPC error codes that indicate server-side session expiry (e.g. <code>-32602</code> for EDWM MCP). Leave empty for most servers.</p>
+    </div>
+
+    {# Health probe tool (Spec 024) #}
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Health probe tool</label>
+      <input type="text" name="health_probe_tool"
+             value="{% if server %}{{ server.health_probe_tool }}{% endif %}"
+             placeholder="get_current_date"
+             class="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/20 text-white text-sm font-mono focus:outline-none focus:border-blue-500/60">
+      <p class="text-xs text-gray-600 mt-1">No-parameter tool used to probe if the session is alive. Required when session-dead error codes are set. Must be idempotent and side-effect-free.</p>
+    </div>
+
     {# Enabled #}
     <div class="flex items-center gap-2">
       <input type="checkbox" name="enabled" id="mcp-enabled"

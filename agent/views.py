@@ -1588,6 +1588,10 @@ class MCPServerAddView(View):
         always_include_raw = request.POST.get("always_include_resources", "").strip()
         always_include_resources = [r.strip() for r in always_include_raw.split(",") if r.strip()] if always_include_raw else []
 
+        dead_codes_raw = request.POST.get("session_dead_error_codes", "").strip()
+        session_dead_error_codes = [int(c.strip()) for c in dead_codes_raw.split(",") if c.strip().lstrip("-").isdigit()] if dead_codes_raw else []
+        health_probe_tool = request.POST.get("health_probe_tool", "").strip()
+
         enabled = request.POST.get("enabled") == "on"
 
         server = MCPServer(
@@ -1598,6 +1602,8 @@ class MCPServerAddView(View):
             env=env,
             auto_approve_tools=auto_approve_tools,
             always_include_resources=always_include_resources,
+            session_dead_error_codes=session_dead_error_codes,
+            health_probe_tool=health_probe_tool,
             enabled=enabled,
         )
         try:
@@ -1657,6 +1663,10 @@ class MCPServerDetailView(View):
 
         always_include_raw = request.POST.get("always_include_resources", "").strip()
         server.always_include_resources = [r.strip() for r in always_include_raw.split(",") if r.strip()] if always_include_raw else []
+
+        dead_codes_raw = request.POST.get("session_dead_error_codes", "").strip()
+        server.session_dead_error_codes = [int(c.strip()) for c in dead_codes_raw.split(",") if c.strip().lstrip("-").isdigit()] if dead_codes_raw else []
+        server.health_probe_tool = request.POST.get("health_probe_tool", "").strip()
 
         was_enabled = server.enabled
         server.enabled = request.POST.get("enabled") == "on"
