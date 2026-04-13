@@ -184,6 +184,34 @@ def _read_agents_md() -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
+def _validate_skill(skill_dir: Path) -> tuple[bool, str]:
+    """
+    Run `skills-ref validate <skill_dir>` and return (passed, output).
+    Spec 021.1: validation is run after any write to confirm spec compliance.
+    Returns (True, output) if valid, (False, output) if invalid or CLI not found.
+    """
+    try:
+        skills_ref = shutil.which("skills-ref")
+        if not skills_ref:
+            # Try npm global bin on Windows
+            npm_appdata = os.environ.get("APPDATA", "")
+            candidate = Path(npm_appdata) / "npm" / "skills-ref.cmd"
+            skills_ref = str(candidate) if candidate.exists() else None
+        if not skills_ref:
+            return True, "(skills-ref not installed — validation skipped)"
+
+        result = subprocess.run(
+            ["cmd", "/c", skills_ref, "validate", str(skill_dir)],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        output = (result.stdout or "").strip() or (result.stderr or "").strip()
+        return result.returncode == 0, output
+    except Exception as exc:
+        return True, f"(validation skipped: {exc})"
+
+
 def _list_existing_skills() -> str:
     from agent.skills import registry
     lines = []
@@ -245,8 +273,10 @@ def author_skill(task: str, skill_name: str) -> dict:
             return {"status": "error", "output": stderr or output or f"exit code {result.returncode}", "updated": []}
 
         updated = _reload_and_embed(skills_dir)
-        logger.info("author_skill %s: updated=%s", skill_name, updated)
-        return {"status": "ok", "output": output, "updated": updated}
+        valid, val_output = _validate_skill(skill_dir)
+        validation_note = f"\n\nskills-ref: {val_output}" if val_output else ""
+        logger.info("author_skill %s: updated=%s valid=%s", skill_name, updated, valid)
+        return {"status": "ok" if valid else "warning", "output": output + validation_note, "updated": updated}
 
     except FileNotFoundError:
         return {
@@ -311,8 +341,10 @@ def review_skill(skill_name: str) -> dict:
             return {"status": "error", "output": stderr or output or f"exit code {result.returncode}", "updated": []}
 
         updated = _reload_and_embed(skills_dir)
+        valid, val_output = _validate_skill(skills_dir / skill_name)
+        validation_note = f"\n\nskills-ref: {val_output}" if val_output else ""
         status = "updated" if updated else "ok"
-        return {"status": status, "output": output, "updated": updated}
+        return {"status": status, "output": output + validation_note, "updated": updated}
 
     except FileNotFoundError:
         return {

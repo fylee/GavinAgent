@@ -213,6 +213,18 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]
         parts.append(soul_md)
 
     skills_section, triggered, skill_entries = _build_skills_section(query)
+
+    # Spec 022: inject skill catalog (name + description for all enabled skills)
+    # so the LLM has visibility into available skills even when embedding routing
+    # doesn't select them.  Placed before the detailed skill instructions.
+    try:
+        from agent.skills.embeddings import build_skill_catalog
+        catalog = build_skill_catalog()
+        if catalog:
+            parts.append(catalog)
+    except Exception:
+        pass
+
     if skills_section:
         parts.append(skills_section)
 

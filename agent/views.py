@@ -694,16 +694,20 @@ class SkillReviewApplyView(View):
         from agent.skills.loader import SkillLoader
         from agent.skills import registry as skill_registry
         from agent.skills.embeddings import embed_all_skills
+        from agent.skills.author import _validate_skill
         skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
         SkillLoader(skills_dir).load_all(skill_registry)
         updated = embed_all_skills()
+        valid, val_output = _validate_skill(skill_path.parent)
 
         if request.htmx:
             from django.utils.html import escape
             embed_msg = f", re-embedded: {', '.join(updated)}" if updated else ""
+            val_msg = f" | skills-ref: {escape(val_output)}" if val_output else ""
+            status_class = "text-green-400" if valid else "text-yellow-400"
             html = (
-                f'<div class="text-green-400 text-sm space-y-1">'
-                f'<p>✓ Applied and saved{escape(embed_msg)}.</p>'
+                f'<div class="{status_class} text-sm space-y-1">'
+                f'<p>✓ Applied and saved{escape(embed_msg)}.{val_msg}</p>'
                 f'<p class="text-xs text-gray-500">Reload the editor page to see the updated content.</p>'
                 f'</div>'
             )
