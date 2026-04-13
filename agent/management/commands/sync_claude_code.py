@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import yaml
@@ -156,28 +157,35 @@ class Command(BaseCommand):
                     body = parts[2].strip()
 
             name: str = meta.get("name", skill_dir.name)
-            description: str = meta.get("description", "")
 
             # Sanitise name for filesystem (replace spaces/special chars with dashes)
             safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", name).strip("-")
 
-            # Rebuild SKILL.md with name + description frontmatter
-            lines: list[str] = ["---", f"name: {safe_name}"]
-            lines.append(f"description: {description}" if description else "description: GavinAgent skill")
-            lines.append("---")
-            lines.append("")
-            lines.append(body)
-            skill_content = "\n".join(lines)
+            # Merge strategy: normalise name only, preserve all other frontmatter fields
+            meta["name"] = safe_name
+            if "description" not in meta:
+                meta["description"] = "GavinAgent skill"
+            output_frontmatter = yaml.dump(meta, allow_unicode=True, sort_keys=False).rstrip()
+            skill_content = f"---\n{output_frontmatter}\n---\n\n{body}"
 
             dest_dir = user_skills_dir / safe_name
             dest = dest_dir / "SKILL.md"
 
+            # Identify bundled resource directories present in the source
+            bundled_dirs = ["scripts", "references", "assets"]
+            present_subdirs = [d for d in bundled_dirs if (skill_dir / d).is_dir()]
+
             if dry_run:
-                self.stdout.write(f"  Skills: would write {dest} ({len(skill_content)} chars)")
+                subdir_note = f"  [{', '.join(present_subdirs)}]" if present_subdirs else ""
+                self.stdout.write(f"  Skills: would write {dest} ({len(skill_content)} chars){subdir_note}")
             else:
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 dest.write_text(skill_content, encoding="utf-8")
-                self.stdout.write(f"  Skills: {name}  →  /{safe_name}")
+                for subdir_name in present_subdirs:
+                    src_sub = skill_dir / subdir_name
+                    dst_sub = dest_dir / subdir_name
+                    shutil.copytree(src_sub, dst_sub, dirs_exist_ok=True)
+                self.stdout.write(f"  Skills: {name}  →  /{safe_name}" + (f"  [{', '.join(present_subdirs)}]" if present_subdirs else ""))
                 written += 1
 
         if not dry_run:
