@@ -28,18 +28,22 @@ def _skills_dir() -> Path:
 
 
 def _parse_metadata_list(metadata: dict, key: str) -> list[str]:
-    """Read a pipe-separated string from metadata as a list.
+    """Read a separated string from metadata as a list.
 
-    Spec 021: GavinAgent extension fields are stored as pipe-separated strings
+    Spec 021: GavinAgent extension fields are stored as separated strings
     inside the `metadata` map (metadata values must be strings, not lists).
     Also accepts legacy list values for backwards compatibility during migration.
+
+    `trigger_patterns` uses ';;' as separator (since regex patterns contain '|').
+    All other fields use '|' as separator.
     """
     raw = metadata.get(key)
     if not raw:
         return []
     if isinstance(raw, list):
         return [str(item).strip() for item in raw if str(item).strip()]
-    return [item.strip() for item in str(raw).split("|") if item.strip()]
+    sep = ";;" if key == "trigger_patterns" else "|"
+    return [item.strip() for item in str(raw).split(sep) if item.strip()]
 
 
 def _skill_embed_text(

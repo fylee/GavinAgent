@@ -3,7 +3,7 @@ name: workflow-management
 description: Create, update, and manage scheduled workflows. Use when the user wants something done at a specific time, on a schedule, or repeated automatically.
 metadata:
   triggers: "workflow | cron | scheduled | schedule | recurring | periodically | interval | remind me | automatically"
-  trigger_patterns: "every\\s+(\\d+\\s+)?(minute|hour|day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday) | at\\s+\\d{1,2}[:\\.]\\d{2} | at\\s+\\d{1,2}\\s*(am|pm) | (today|tomorrow|daily|weekly|monthly|hourly)\\s+at | run\\s+(at|every) | (send|tell|remind|notify|post|check)\\s+me\\s+(at|every)"
+  trigger_patterns: "every\\s+(\\d+\\s+)?(minute|hour|day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday) ;; at\\s+\\d{1,2}[:\\.]\\d{2} ;; at\\s+\\d{1,2}\\s*(am|pm) ;; (today|tomorrow|daily|weekly|monthly|hourly)\\s+at ;; run\\s+(at|every) ;; (send|tell|remind|notify|post|check)\\s+me\\s+(at|every)"
   examples: "tell me a joke at 3pm today | send me a weather report every morning at 8am | remind me to drink water every 30 minutes | run a report every Monday at 9am | schedule a task for tomorrow at noon"
   version: "1"
 ---

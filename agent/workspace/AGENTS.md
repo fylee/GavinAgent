@@ -30,7 +30,7 @@ allowed-tools: Bash       # optional; space-separated tools pre-approved for thi
 compatibility: Requires internet access to Yahoo Finance   # optional; environment notes
 metadata:                 # GavinAgent extension fields — all values must be strings
   triggers: "keyword | phrase | another phrase"   # pipe-separated; keyword fallback matching
-  trigger_patterns: "regex1 | regex2"             # pipe-separated regex patterns
+  trigger_patterns: "regex1 ;; regex2"             # DOUBLE-SEMICOLON separated regex patterns (NOT pipe — regex uses | internally)
   examples: "example request 1 | example request 2"  # pipe-separated user examples
   version: "1"            # increment on each significant update
   approval_required: "false"
