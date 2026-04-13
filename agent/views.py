@@ -1552,9 +1552,14 @@ class MCPServerListView(View):
         registry = get_registry()
         for server in servers:
             tools = [e for e in registry.all().values() if e.server_name == server.name]
+            # Annotate with live pool status (overrides stale DB connection_status)
+            live_status = pool.get_status(server.name) if server.enabled else "disconnected"
+            server.live_status = live_status
             servers_with_tools.append({"server": server, "tools": tools})
+        all_disabled = bool(servers) and all(not item["server"].enabled for item in servers_with_tools)
         return render(request, self.template_name, {
             "servers_with_tools": servers_with_tools,
+            "all_disabled": all_disabled,
         })
 
 
@@ -1721,6 +1726,7 @@ class MCPServerToggleView(View):
         from agent.mcp.registry import get_registry
         tools = [e for e in get_registry().all().values() if e.server_name == server.name]
         server.refresh_from_db()
+        server.live_status = pool.get_status(server.name) if server.enabled else "disconnected"
         html = render_to_string(
             "agent/_mcp_server.html",
             {"server": server, "tools": tools},

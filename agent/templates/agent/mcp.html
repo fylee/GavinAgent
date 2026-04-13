@@ -22,6 +22,13 @@
     </p>
   </div>
 
+  {% if all_disabled and servers_with_tools %}
+  <div class="rounded-lg border border-red-700/40 bg-red-900/10 px-4 py-3">
+    <p class="text-red-400 text-sm font-semibold mb-1">⚠ All MCP servers are disabled</p>
+    <p class="text-red-300 text-xs">No MCP tools are available to the agent. Click <strong>Disabled</strong> on each server below to enable it.</p>
+  </div>
+  {% endif %}
+
   {# Add form slot — filled by HTMX #}
   <div id="add-form-slot"></div>
 

@@ -5,13 +5,15 @@
 
   <div class="flex items-start justify-between gap-3">
     <div class="flex items-center gap-3">
-      {# Status dot #}
+      {# Status dot — uses live_status when available (set by list view), falls back to DB field #}
+      {% with status=server.live_status|default:server.connection_status %}
       <span class="inline-block w-2 h-2 rounded-full flex-shrink-0
-        {% if server.connection_status == 'connected' %}bg-green-400
-        {% elif server.connection_status == 'error' %}bg-red-400
-        {% elif server.connection_status == 'disconnected' %}bg-gray-500
+        {% if status == 'connected' %}bg-green-400
+        {% elif status == 'error' %}bg-red-400
+        {% elif status == 'disconnected' %}bg-gray-500
         {% else %}bg-yellow-400{% endif %}">
       </span>
+      {% endwith %}
       <div>
         <p class="text-sm font-semibold text-white">{{ server.name }}</p>
         <p class="text-xs text-gray-500">
@@ -69,9 +71,11 @@
   </div>
 
   {# Status / error #}
-  {% if server.connection_status == 'error' and server.last_error %}
+  {% with status=server.live_status|default:server.connection_status %}
+  {% if status == 'error' and server.last_error %}
   <p class="text-xs text-red-400 font-mono bg-red-900/10 rounded px-2 py-1">{{ server.last_error|truncatechars:200 }}</p>
   {% endif %}
+  {% endwith %}
 
   {# Discovered tools #}
   {% if tools %}
