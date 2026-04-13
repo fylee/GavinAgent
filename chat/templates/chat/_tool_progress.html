@@ -59,6 +59,9 @@
               {% if entry.elapsed_s is not None %}
               <span class="text-[10px] text-gray-600">+{{ entry.elapsed_s }}s</span>
               {% endif %}
+              {% if entry.llm_ms %}
+              <span class="text-[10px] text-indigo-400/60">🧠 {{ entry.llm_ms }}ms</span>
+              {% endif %}
               {% if entry.parallel_count and entry.parallel_count > 1 %}
               <span class="text-[10px] text-violet-400/80 font-medium">⇉ {{ entry.parallel_count }} tools in parallel</span>
               {% endif %}

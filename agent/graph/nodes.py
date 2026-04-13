@@ -643,6 +643,7 @@ def call_llm(state: AgentState) -> dict:
         pass
 
     try:
+        _round_start_ts = timezone.now().timestamp()
         response = get_completion(
             messages,
             model=model,
@@ -653,6 +654,8 @@ def call_llm(state: AgentState) -> dict:
     except Exception as exc:
         logger.exception("LLM call failed in AgentRun %s: %s", state.get("run_id"), exc)
         return {"output": f"LLM error: {exc}", "pending_tool_calls": []}
+
+    _llm_ms = round((timezone.now().timestamp() - _round_start_ts) * 1000)
 
     choice = response.choices[0]
     message = choice.message
@@ -708,8 +711,10 @@ def call_llm(state: AgentState) -> dict:
             "tool_wall_ms": None,
             "tool_count": 0,
             "forced": False,
-            # Unix timestamp (float) when this round started — used to compute cumulative elapsed
-            "ts": timezone.now().timestamp(),
+            # ts = Unix timestamp when this round's LLM call started (before get_completion)
+            "ts": _round_start_ts,
+            # llm_ms = time the LLM took to respond for this round
+            "llm_ms": _llm_ms,
         }
         loop_trace.append(trace_entry)
 
@@ -768,7 +773,8 @@ def call_llm(state: AgentState) -> dict:
         "tool_wall_ms": None,
         "tool_count": 0,
         "forced": False,
-        "ts": timezone.now().timestamp(),
+        "ts": _round_start_ts,
+        "llm_ms": _llm_ms,
     }
     loop_trace.append(trace_entry)
 

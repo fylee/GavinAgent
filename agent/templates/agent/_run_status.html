@@ -288,8 +288,11 @@
           {% if entry.parallel_count and entry.parallel_count > 1 %}
           <span class="text-[10px] text-violet-400 font-semibold">⇉ {{ entry.parallel_count }} in parallel</span>
           {% endif %}
+          {% if entry.llm_ms %}
+          <span class="text-[10px] text-indigo-400/70">🧠 {{ entry.llm_ms }}ms</span>
+          {% endif %}
           {% if entry.tool_wall_ms %}
-          <span class="text-[10px] text-gray-600">wall {{ entry.tool_wall_ms }}ms</span>
+          <span class="text-[10px] text-gray-600">🔧 {{ entry.tool_wall_ms }}ms</span>
           {% endif %}
           {% else %}
           <span class="text-xs {% if entry.forced %}text-red-400{% else %}text-green-400{% endif %}">
@@ -297,6 +300,9 @@
           </span>
           {% if entry.elapsed_s is not None %}
           <span class="text-[10px] text-gray-500">+{{ entry.elapsed_s }}s</span>
+          {% endif %}
+          {% if entry.llm_ms %}
+          <span class="text-[10px] text-indigo-400/70">🧠 {{ entry.llm_ms }}ms</span>
           {% endif %}
           {% endif %}
 
