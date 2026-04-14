@@ -595,6 +595,9 @@ class SkillsView(TemplateView):
     template_name = "agent/skills.html"
 
     def get_context_data(self, **kwargs):
+        from collections import Counter
+        from pathlib import Path
+
         from agent.skills import registry
         from agent.skills.discovery import collect_all_skills, all_skill_dirs
         from agent.models import SkillEmbedding, TrustedSkillSource
@@ -603,11 +606,8 @@ class SkillsView(TemplateView):
         db_skills_map = {s.name: s for s in Skill.objects.all()}
 
         # Build set of trusted source dir paths for quick lookup
-        trusted_paths = {
-            str(src.path)
-            for src in all_skill_dirs(check_db_trust=True)
-            if src.trusted
-        }
+        sources = all_skill_dirs(check_db_trust=True)
+        trusted_paths = {str(src.path) for src in sources if src.trusted}
 
         # Build embedding status lookup
         embedded_names = set(SkillEmbedding.objects.values_list("skill_name", flat=True))
@@ -616,8 +616,25 @@ class SkillsView(TemplateView):
         discovered = collect_all_skills(check_db_trust=True)
         discovered_map = {s["name"]: s for s in discovered}
 
+        def _source_label(source_dir_str: str) -> str:
+            if not source_dir_str:
+                return "Other"
+            p = Path(source_dir_str)
+            try:
+                workspace_skills = (Path(settings.AGENT_WORKSPACE_DIR) / "skills").resolve()
+                if p.resolve() == workspace_skills:
+                    return "Workspace"
+            except Exception:
+                pass
+            try:
+                claude_skills = (Path.home() / ".claude" / "skills").resolve()
+                if p.resolve() == claude_skills:
+                    return "Claude Code"
+            except Exception:
+                pass
+            return p.name or "Other"
+
         skills_with_db = []
-        # Merge registry entries (loaded skills) with discovered (includes untrusted)
         shown_names: set[str] = set()
         for entry in registry.all().values():
             info = discovered_map.get(entry.name, {})
@@ -626,12 +643,14 @@ class SkillsView(TemplateView):
                 "untrusted" if not trusted
                 else ("embedded" if entry.name in embedded_names else "not_embedded")
             )
+            source_dir = str(info.get("source_dir", ""))
             skills_with_db.append({
                 "entry": entry,
                 "db": db_skills_map.get(entry.name),
                 "embed_status": embed_status,
                 "trusted": trusted,
-                "source_dir": str(info.get("source_dir", "")),
+                "source_dir": source_dir,
+                "source_label": _source_label(source_dir),
             })
             shown_names.add(entry.name)
 
@@ -641,17 +660,28 @@ class SkillsView(TemplateView):
                 continue
             trusted = str(info.get("source_dir", "")) in trusted_paths
             embed_status = "untrusted" if not trusted else "not_embedded"
+            source_dir = str(info.get("source_dir", ""))
             skills_with_db.append({
                 "entry": None,
                 "db": db_skills_map.get(info["name"]),
                 "embed_status": embed_status,
                 "trusted": trusted,
-                "source_dir": str(info.get("source_dir", "")),
+                "source_dir": source_dir,
+                "source_label": _source_label(source_dir),
                 "discovered_name": info["name"],
                 "discovered_description": (db_skills_map.get(info["name"]) and db_skills_map[info["name"]].description) or "",
             })
 
+        # Build tab list sorted: Workspace first, Claude Code second, rest alphabetically
+        label_counts = Counter(item["source_label"] for item in skills_with_db)
+        tab_order = {"Workspace": 0, "Claude Code": 1}
+        skill_tabs = sorted(
+            [{"name": label, "count": count} for label, count in label_counts.items()],
+            key=lambda t: (tab_order.get(t["name"], 2), t["name"]),
+        )
+
         ctx["skills_with_db"] = skills_with_db
+        ctx["skill_tabs"] = skill_tabs
         return ctx
 
 
@@ -683,6 +713,38 @@ class SkillInstallView(View):
             return HttpResponse(
                 f'<p class="text-green-400 text-sm">Loaded {len(loaded)} skill(s): {", ".join(loaded) or "none"}.</p>'
             )
+        return redirect("agent:skills")
+
+
+class SkillImportFromProjectView(View):
+    """POST /agent/skills/import-from-project/ — copy skills from ../skills/.agents/skills/ into agent/workspace/skills/."""
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        import shutil
+        from pathlib import Path
+
+        source_dir = (Path(settings.BASE_DIR).parent / "skills" / ".agents" / "skills").resolve()
+        dest_dir = (Path(settings.AGENT_WORKSPACE_DIR) / "skills").resolve()
+
+        if not source_dir.exists():
+            msg = f"Source not found: {source_dir}"
+            if request.htmx:
+                return HttpResponse(f'<span class="text-xs text-red-400">{msg}</span>')
+            return redirect("agent:skills")
+
+        imported: list[str] = []
+        for skill_dir in sorted(source_dir.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            if not (skill_dir / "SKILL.md").exists():
+                continue
+            dest_skill = dest_dir / skill_dir.name
+            shutil.copytree(skill_dir, dest_skill, dirs_exist_ok=True)
+            imported.append(skill_dir.name)
+
+        msg = f"Imported {len(imported)} skill(s): {', '.join(imported) or 'none'}."
+        if request.htmx:
+            return HttpResponse(f'<span class="text-xs text-green-400">{msg}</span>')
         return redirect("agent:skills")
 
 
@@ -1046,6 +1108,43 @@ class SkillEmbedAllView(View):
             msg = f"Re-embedded {len(processed)} skill(s)."
         except Exception as exc:
             msg = f"Error during re-embed: {exc}"
+
+        if request.htmx:
+            return HttpResponse(
+                f'<span class="text-xs text-green-400">{msg}</span>'
+            )
+        return redirect("agent:skills")
+
+
+class SkillListApiView(View):
+    """GET /agent/api/skills/ — return enabled skills as JSON for UI autocomplete."""
+
+    def get(self, request: HttpRequest) -> JsonResponse:
+        from agent.skills import registry
+
+        skills = sorted(
+            [{"name": e.name, "description": e.description} for e in registry.all().values()],
+            key=lambda s: s["name"],
+        )
+        return JsonResponse({"skills": skills})
+
+
+class SkillSyncClaudeCodeView(View):
+    """POST /agent/skills/sync-claude/ — sync workspace skills to ~/.claude/skills/."""
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        from io import StringIO
+        from django.core.management import call_command
+
+        out = StringIO()
+        try:
+            call_command("sync_claude_code", skills_only=True, stdout=out, stderr=out)
+            output = out.getvalue()
+            lines = [l.strip() for l in output.splitlines() if l.strip()]
+            written = next((l for l in lines if l.startswith("Written")), None)
+            msg = written or f"Synced. ({len(lines)} line(s) of output)"
+        except Exception as exc:
+            msg = f"Error: {exc}"
 
         if request.htmx:
             return HttpResponse(

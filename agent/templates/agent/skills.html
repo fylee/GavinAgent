@@ -2,7 +2,7 @@
 {% block title %}Agent Skills{% endblock %}
 
 {% block content %}
-<div class="max-w-3xl mx-auto space-y-6" x-data="{ authorOpen: false }">
+<div class="max-w-3xl mx-auto space-y-6" x-data="{ authorOpen: false, activeTab: '{% if skill_tabs %}{{ skill_tabs.0.name }}{% else %}All{% endif %}' }">
 
   <div class="flex items-center justify-between">
     <h1 class="text-xl font-semibold text-white">Skills</h1>
@@ -15,6 +15,16 @@
          class="text-xs px-3 py-1.5 rounded-lg bg-purple-700 hover:bg-purple-600 text-white transition-colors">
         + New skill
       </a>
+      <form method="post" action="{% url 'agent:skill-import-from-project' %}">
+        {% csrf_token %}
+        <button type="submit"
+                hx-post="{% url 'agent:skill-import-from-project' %}"
+                hx-target="#sync-status"
+                hx-swap="innerHTML"
+                class="text-xs px-3 py-1.5 rounded-lg border border-white/20 text-gray-300 hover:bg-white/10 transition-colors">
+          Load from Skills Project
+        </button>
+      </form>
       <form method="post" action="{% url 'agent:skill-install' %}">
         {% csrf_token %}
         <button type="submit"
@@ -29,16 +39,26 @@
         {% csrf_token %}
         <button type="submit"
                 hx-post="{% url 'agent:skill-embed-all' %}"
-                hx-target="#embed-all-status"
+                hx-target="#sync-status"
                 hx-swap="innerHTML"
                 class="text-xs px-3 py-1.5 rounded-lg border border-blue-700/60 text-blue-300 hover:bg-blue-900/40 transition-colors">
-          ↺ Re-embed All
+          Embed Skills
+        </button>
+      </form>
+      <form method="post" action="{% url 'agent:skill-sync-claude' %}">
+        {% csrf_token %}
+        <button type="submit"
+                hx-post="{% url 'agent:skill-sync-claude' %}"
+                hx-target="#sync-status"
+                hx-swap="innerHTML"
+                class="text-xs px-3 py-1.5 rounded-lg border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/40 transition-colors">
+          ↑ Sync to Claude Code
         </button>
       </form>
     </div>
   </div>
 
-  <div id="embed-all-status" class="text-xs text-gray-400 min-h-[1rem]"></div>
+  <div id="sync-status" class="text-xs text-gray-400 min-h-[1rem]"></div>
 
   {# Author with Claude modal #}
   <div x-show="authorOpen" x-cloak
@@ -96,9 +116,29 @@
     Each skill directory needs a <code class="font-mono">SKILL.md</code> file with YAML frontmatter.
   </p>
 
+  {# Tab bar #}
+  {% if skill_tabs %}
+  <div class="flex items-center gap-0 border-b border-white/10">
+    <button @click="activeTab = 'All'"
+            :class="activeTab === 'All' ? 'border-b-2 border-blue-400 text-white' : 'text-gray-500 hover:text-gray-300'"
+            class="text-xs px-4 py-2 transition-colors -mb-px">
+      All <span class="ml-1 text-gray-600">({{ skills_with_db|length }})</span>
+    </button>
+    {% for tab in skill_tabs %}
+    <button @click="activeTab = '{{ tab.name }}'"
+            :class="activeTab === '{{ tab.name }}' ? 'border-b-2 border-blue-400 text-white' : 'text-gray-500 hover:text-gray-300'"
+            class="text-xs px-4 py-2 transition-colors -mb-px">
+      {{ tab.name }} <span class="ml-1 text-gray-600">({{ tab.count }})</span>
+    </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <div class="space-y-3">
     {% for item in skills_with_db %}
-    {% include "agent/_skill_row.html" with entry=item.entry db=item.db embed_status=item.embed_status trusted=item.trusted source_dir=item.source_dir discovered_name=item.discovered_name discovered_description=item.discovered_description only %}
+    <div x-show="activeTab === 'All' || activeTab === '{{ item.source_label }}'">
+      {% include "agent/_skill_row.html" with entry=item.entry db=item.db embed_status=item.embed_status trusted=item.trusted source_dir=item.source_dir source_label=item.source_label discovered_name=item.discovered_name discovered_description=item.discovered_description only %}
+    </div>
     {% empty %}
     <p class="text-gray-500 text-sm">
       No skills loaded. Create a directory in

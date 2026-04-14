@@ -55,7 +55,7 @@
         {% endif %}
       </div>
       <p class="text-sm text-gray-400">{% if entry %}{{ entry.description }}{% else %}{{ discovered_description }}{% endif %}</p>
-      <p class="text-xs text-gray-600 mt-1 font-mono">{% if entry %}{{ entry.path }}{% endif %}</p>
+      <p class="text-xs text-gray-600 mt-1 font-mono">{% if source_dir %}{{ source_dir }}{% elif entry %}{{ entry.path }}{% endif %}</p>
     </div>
 
     <div class="flex-shrink-0 flex items-center gap-3" id="skill-action-{{ entry.name|default:discovered_name }}">

@@ -11,6 +11,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _unwrap_error(exc: BaseException) -> str:
+    """Return a human-readable error string, unwrapping ExceptionGroup if needed."""
+    if isinstance(exc, BaseExceptionGroup):
+        sub = exc.exceptions[0] if exc.exceptions else exc
+        return _unwrap_error(sub)
+    return str(exc)
+
+
 class MCPTimeoutError(Exception):
     pass
 
@@ -67,7 +75,7 @@ async def run_stdio_connection(
                 if retries < max_retries:
                     await asyncio.sleep(5 * retries)
                 else:
-                    await on_error(server_name, str(exc))
+                    await on_error(server_name, _unwrap_error(exc))
 
 
 async def run_sse_connection(
@@ -117,13 +125,13 @@ async def run_sse_connection(
                     "MCP SSE server %s: %d consecutive failures — giving up. Last error: %s",
                     server_name, consecutive_failures, exc,
                 )
-                await on_error(server_name, str(exc))
+                await on_error(server_name, _unwrap_error(exc))
                 return
             # Exponential backoff: 5s, 10s, 20s, 40s, capped at 60s
             delay = min(5 * (2 ** (consecutive_failures - 1)), 60)
             logger.warning(
                 "MCP SSE server %s error (attempt %d/%d), retrying in %ds: %s",
-                server_name, consecutive_failures, MAX_HARD_FAILURES, delay, exc,
+                server_name, consecutive_failures, MAX_HARD_FAILURES, delay, _unwrap_error(exc),
             )
             await asyncio.sleep(delay)
 

@@ -87,7 +87,7 @@ class Command(BaseCommand):
                 if dry_run:
                     # Check if it would actually change
                     try:
-                        text = skill_md.read_text(encoding="utf-8")
+                        text = skill_md.read_text(encoding="utf-8-sig")
                         meta: dict = {}
                         body = text
                         if text.startswith("---"):

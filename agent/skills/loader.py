@@ -19,7 +19,7 @@ def _parse_skill_md(path: Path) -> dict:
     Spec 021 regression fix: reads approval_required from metadata.approval_required
     with top-level fallback; normalises "true"/"false" strings to bool.
     """
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8-sig")
     if not text.startswith("---"):
         return {}
     parts = text.split("---", 2)
@@ -41,6 +41,10 @@ def _parse_skill_md(path: Path) -> dict:
                 logger.warning("Could not read rules file %s: %s", rules_file, exc)
         if rules_parts:
             body = body + "\n\n---\n\n" + "\n\n---\n\n".join(rules_parts)
+
+    # Spec 026: append Tier 3 supporting files hint for references/templates/assets/
+    skill_name = meta.get("name") or path.parent.name
+    body = _append_supporting_files_hint(body, path.parent, skill_name)
 
     meta["instructions"] = body
 
@@ -105,6 +109,30 @@ class SkillLoader:
             loaded.append(meta["name"])
 
         return loaded
+
+
+def _append_supporting_files_hint(body: str, skill_dir: Path, skill_name: str) -> str:
+    """
+    Spec 026: Tier 3 — scan references/, templates/, and assets/ and append a
+    hint block listing available files with a skill_view() load instruction.
+
+    Files are listed with paths relative to skill_dir.
+    If no bundled directories exist (or all are empty), body is returned unchanged.
+    """
+    BUNDLED_DIRS = ("references", "templates", "assets")
+    files: list[str] = []
+    for subdir in BUNDLED_DIRS:
+        sub = skill_dir / subdir
+        if sub.is_dir():
+            for f in sorted(sub.rglob("*")):
+                if f.is_file():
+                    files.append(str(f.relative_to(skill_dir)).replace("\\", "/"))
+    if not files:
+        return body
+    hint_lines = ["", "[Supporting files available on demand:]"]
+    hint_lines += [f"- {f}" for f in files]
+    hint_lines.append(f'\nTo load: skill_view("{skill_name}", "<file_path>")')
+    return body + "\n".join(hint_lines)
 
 
 def _load_handler(path: Path, skill_name: str) -> Callable | None:

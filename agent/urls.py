@@ -34,7 +34,9 @@ urlpatterns = [
     path("skills/create/", views.SkillCreateView.as_view(), name="skill-create"),
     path("skills/author/", views.SkillAuthorView.as_view(), name="skill-author"),
     path("skills/install/", views.SkillInstallView.as_view(), name="skill-install"),
+    path("skills/import-from-project/", views.SkillImportFromProjectView.as_view(), name="skill-import-from-project"),
     path("skills/embed-all/", views.SkillEmbedAllView.as_view(), name="skill-embed-all"),
+    path("skills/sync-claude/", views.SkillSyncClaudeCodeView.as_view(), name="skill-sync-claude"),
     path("skills/<str:name>/edit/", views.SkillEditView.as_view(), name="skill-edit"),
     path("skills/<str:name>/review/", views.SkillReviewView.as_view(), name="skill-review"),
     path("skills/<str:name>/review/suggest/", views.SkillReviewSuggestView.as_view(), name="skill-review-suggest"),
@@ -43,6 +45,9 @@ urlpatterns = [
     path("skills/<str:name>/embed/", views.SkillEmbedView.as_view(), name="skill-embed"),
     path("skills/<str:name>/approve-source/", views.SkillApproveSourceView.as_view(), name="skill-approve-source"),
     path("skills/<str:name>/delete/", views.SkillDeleteView.as_view(), name="skill-delete"),
+
+    # Skills API
+    path("api/skills/", views.SkillListApiView.as_view(), name="api-skills"),
 
     # Agent CRUD
     path("agents/", views.AgentListView.as_view(), name="agent-list"),

@@ -20,6 +20,11 @@ Trust model:
   - Standard dirs (.agents/, ~/.agents/, ~/.claude/) require a TrustedSkillSource
     DB record before their skills are embedded or injected into the LLM context.
     They are always discovered and shown in the UI.
+
+Spec 026: Category directory support, platform filtering, and skill enable/disable.
+  - Two-level directory layout (category/skill-name/SKILL.md) is supported.
+  - skill_matches_platform() filters by frontmatter `platforms:` field.
+  - get_disabled_skills() / _parse_platform_disabled() support env-driven disable.
 """
 from __future__ import annotations
 
@@ -120,18 +125,115 @@ def all_skill_dirs(check_db_trust: bool = True) -> list[SkillSourceDir]:
 
 
 def iter_skill_dirs(base: Path) -> list[Path]:
-    """Return all skill directories (subdirs with a SKILL.md) inside base."""
+    """
+    Return all skill directories (subdirs with a SKILL.md) inside base.
+
+    Spec 026: supports two-level directory layout (category/skill-name/SKILL.md).
+    A directory that contains SKILL.md is always a skill dir; a directory that
+    lacks SKILL.md is treated as a category container and its subdirs are scanned
+    one level deeper.
+    """
     if not base.exists():
         return []
-    return sorted(
-        d for d in base.iterdir()
-        if d.is_dir() and (d / "SKILL.md").exists()
-    )
+    result: list[Path] = []
+    for entry in sorted(base.iterdir()):
+        if not entry.is_dir():
+            continue
+        if (entry / "SKILL.md").exists():
+            # Flat layout: base/skill-name/SKILL.md
+            result.append(entry)
+        else:
+            # Possibly a category dir — scan one level deeper
+            for sub in sorted(entry.iterdir()):
+                if sub.is_dir() and (sub / "SKILL.md").exists():
+                    result.append(sub)
+    return result
 
 
-def collect_all_skills(check_db_trust: bool = True) -> list[dict]:
+def _get_category_from_path(skill_path: Path, base_dir: Path) -> str | None:
+    """
+    Spec 026: Extract the category name from a skill SKILL.md path.
+
+    Two-level layout: base_dir/category/skill-name/SKILL.md → "category"
+    Flat layout:      base_dir/skill-name/SKILL.md            → None
+    """
+    try:
+        rel = skill_path.relative_to(base_dir)
+        # rel.parts = ("category", "skill-name", "SKILL.md") → len >= 3
+        if len(rel.parts) >= 3:
+            return rel.parts[0]
+    except ValueError:
+        pass
+    return None
+
+
+def skill_matches_platform(frontmatter: dict, platform: str | None) -> bool:
+    """
+    Spec 026: Return True if the skill is compatible with the given platform.
+
+    Rules:
+      - No `platforms` field → matches all platforms (always True)
+      - `platforms: []` (empty list) → matches all (treated as unset)
+      - `platform=None` → no filtering, always True
+      - Otherwise: True iff platform is in the frontmatter `platforms` list
+    """
+    platforms = frontmatter.get("platforms")
+    if not platforms or platform is None:
+        return True
+    return platform in platforms
+
+
+def _parse_platform_disabled(raw: str) -> dict[str, set[str]]:
+    """
+    Spec 026: Parse AGENT_PLATFORM_DISABLED_SKILLS into a dict.
+
+    Format: "platform:skill-a,skill-b;platform2:skill-c"
+    Malformed entries (no colon) are silently skipped.
+
+    Returns: {"chat": {"skill-a", "skill-b"}, "copilot": {"skill-c"}}
+    """
+    result: dict[str, set[str]] = {}
+    if not raw:
+        return result
+    for entry in raw.split(";"):
+        entry = entry.strip()
+        if ":" not in entry:
+            continue
+        platform, _, skills_str = entry.partition(":")
+        platform = platform.strip()
+        skills = {s.strip() for s in skills_str.split(",") if s.strip()}
+        if platform and skills:
+            result[platform] = skills
+    return result
+
+
+def get_disabled_skills(platform: str | None = None) -> set[str]:
+    """
+    Spec 026: Return the set of skill names disabled for the given platform.
+
+    Resolution order:
+      1. If AGENT_PLATFORM_DISABLED_SKILLS has an entry for `platform`, use it
+         (platform-specific list completely replaces global list for that platform).
+      2. Otherwise fall back to AGENT_DISABLED_SKILLS (global).
+      3. If platform=None, always return the global list.
+    """
+    global_disabled = set(getattr(settings, "AGENT_DISABLED_SKILLS", []) or [])
+    if platform is None:
+        return global_disabled
+    raw = getattr(settings, "AGENT_PLATFORM_DISABLED_SKILLS", "") or ""
+    platform_map = _parse_platform_disabled(raw)
+    return platform_map.get(platform, global_disabled)
+
+
+def collect_all_skills(
+    check_db_trust: bool = True,
+    platform: str | None = None,
+) -> list[dict]:
     """
     Collect all skills across all source directories, respecting precedence.
+
+    Spec 026: Accepts optional `platform` to filter by frontmatter `platforms:`
+    field and by platform-specific disabled skill settings.
 
     Returns a list of dicts:
         {
@@ -139,12 +241,16 @@ def collect_all_skills(check_db_trust: bool = True) -> list[dict]:
             "skill_dir": Path,
             "source_dir": Path,
             "trusted": bool,
+            "category": str | None,   # Spec 026
         }
 
     Name collisions: first occurrence (highest precedence) wins; subsequent
     entries for the same name are shadowed (logged, not returned).
     """
+    import yaml
+
     sources = all_skill_dirs(check_db_trust=check_db_trust)
+    disabled = get_disabled_skills(platform=platform)
     seen_names: dict[str, Path] = {}   # name → source_dir that owns it
     result: list[dict] = []
 
@@ -161,12 +267,32 @@ def collect_all_skills(check_db_trust: bool = True) -> list[dict]:
                 )
                 continue
 
+            # Spec 026: platform filtering
+            if platform is not None:
+                try:
+                    text = skill_md.read_text(encoding="utf-8-sig")
+                    meta: dict = {}
+                    if text.startswith("---"):
+                        parts = text.split("---", 2)
+                        if len(parts) >= 3:
+                            meta = yaml.safe_load(parts[1]) or {}
+                    if not skill_matches_platform(meta, platform):
+                        continue
+                except Exception:
+                    pass  # if unreadable, include it (fail open)
+
+            # Spec 026: disabled skill filtering
+            if name in disabled:
+                logger.debug("Skill '%s' is disabled for platform=%s — skipping", name, platform)
+                continue
+
             seen_names[name] = src.path
             result.append({
                 "name": name,
                 "skill_dir": skill_dir,
                 "source_dir": src.path,
                 "trusted": src.trusted,
+                "category": _get_category_from_path(skill_md, src.path),
             })
 
     return result
@@ -176,7 +302,7 @@ def _read_skill_name(skill_md: Path) -> str:
     """Fast read of the skill name from SKILL.md frontmatter."""
     try:
         import yaml
-        text = skill_md.read_text(encoding="utf-8")
+        text = skill_md.read_text(encoding="utf-8-sig")
         if text.startswith("---"):
             parts = text.split("---", 2)
             if len(parts) >= 3:

@@ -366,6 +366,16 @@ class MessageStreamView(View):
             html = render_to_string(
                 "chat/_message.html", msg_ctx, request=request
             )
+            # Refresh title — may have been updated by title-generation task
+            conversation.refresh_from_db(fields=["title"])
+            from django.utils.html import escape as _esc
+            _title = _esc(conversation.title or "")
+            html += (
+                f'<span id="conversation-title" hx-swap-oob="true"'
+                f' class="flex-1 text-sm font-medium text-gray-200 truncate">{_title}</span>'
+                f'<span id="sidebar-title-{conversation.id}" hx-swap-oob="true"'
+                f' class="truncate">{_title}</span>'
+            )
         else:
             html = render_to_string(
                 "chat/_typing_indicator.html",

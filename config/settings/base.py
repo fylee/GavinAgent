@@ -155,6 +155,21 @@ AGENT_SCAN_STANDARD_SKILL_DIRS = config(
     "AGENT_SCAN_STANDARD_SKILL_DIRS", default=True, cast=bool
 )
 
+# Spec 026: Skill enable/disable control
+# Global list of skill names that are disabled on all platforms.
+# Format: comma-separated skill names. Example: "skill-creator,mcp-builder"
+AGENT_DISABLED_SKILLS: list[str] = config(
+    "AGENT_DISABLED_SKILLS", default="", cast=_Csv()
+)
+
+# Per-platform disabled skills override.
+# Format: "platform:skill-a,skill-b;platform2:skill-c"
+# When set for a platform, replaces the global AGENT_DISABLED_SKILLS for that platform.
+# Example: "chat:skill-creator;claude_code:fab-ops-analyst"
+AGENT_PLATFORM_DISABLED_SKILLS: str = config(
+    "AGENT_PLATFORM_DISABLED_SKILLS", default=""
+)
+
 # Maximum tool-call rounds per agent run before force-concluding
 AGENT_MAX_TOOL_CALL_ROUNDS = config("AGENT_MAX_TOOL_CALL_ROUNDS", default=20, cast=int)
 

@@ -129,25 +129,43 @@ class Command(BaseCommand):
 
     # ── Skills → ~/.claude/skills/ ────────────────────────────────────────
 
-    def _sync_skills(self, claude_dir: Path, dry_run: bool) -> None:
-        skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
+    def _sync_skills(
+        self,
+        claude_dir: Path,
+        dry_run: bool,
+        skills_dir: Path | None = None,
+        platform: str = "claude_code",
+    ) -> None:
+        """
+        Sync workspace skills to ~/.claude/skills/.
+
+        Spec 026: Accepts optional `skills_dir` override (for testing) and
+        `platform` parameter (default "claude_code") to filter by `platforms:`
+        frontmatter field and disabled skill settings.
+        """
+        from agent.skills.discovery import skill_matches_platform, get_disabled_skills
+
+        if skills_dir is None:
+            skills_dir = Path(settings.AGENT_WORKSPACE_DIR) / "skills"
         if not skills_dir.exists():
             self.stdout.write("  Skills: workspace/skills/ not found — skipping")
             return
+
+        # Spec 026: get disabled set for claude_code platform
+        disabled = get_disabled_skills(platform=platform)
 
         # Skills must live in ~/.claude/skills/<name>/SKILL.md to be resolvable
         # by the Claude Code CLI skill system (not .claude/commands/).
         user_skills_dir = Path.home() / ".claude" / "skills"
         written = 0
 
-        for skill_dir in sorted(skills_dir.iterdir()):
-            if not skill_dir.is_dir():
-                continue
+        from agent.skills.discovery import iter_skill_dirs
+        for skill_dir in iter_skill_dirs(skills_dir):
             skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
                 continue
 
-            text = skill_md.read_text(encoding="utf-8")
+            text = skill_md.read_text(encoding="utf-8-sig")
             meta: dict = {}
             body = text
             if text.startswith("---"):
@@ -160,6 +178,18 @@ class Command(BaseCommand):
 
             # Sanitise name for filesystem (replace spaces/special chars with dashes)
             safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", name).strip("-")
+
+            # Spec 026: platform filtering — skip if `platforms:` excludes claude_code
+            if not skill_matches_platform(meta, platform):
+                if dry_run:
+                    self.stdout.write(f"  Skills: {name}  [skipped — platform not {platform}]")
+                continue
+
+            # Spec 026: disabled skill filtering
+            if safe_name in disabled or name in disabled:
+                if dry_run:
+                    self.stdout.write(f"  Skills: {name}  [skipped — disabled]")
+                continue
 
             # Merge strategy: normalise name only, preserve all other frontmatter fields
             meta["name"] = safe_name

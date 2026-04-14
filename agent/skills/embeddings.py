@@ -84,7 +84,7 @@ def _embed_skill_dir(skill_dir: Path) -> str | None:
         return None
 
     try:
-        text = skill_md.read_text(encoding="utf-8")
+        text = skill_md.read_text(encoding="utf-8-sig")
         meta: dict = {}
         body = text
         if text.startswith("---"):
@@ -121,7 +121,11 @@ def _embed_skill_dir(skill_dir: Path) -> str | None:
         return None
 
 
-def embed_all_skills(native_only: bool = False, force: bool = False) -> list[str]:
+def embed_all_skills(
+    native_only: bool = False,
+    force: bool = False,
+    platform: str | None = None,
+) -> list[str]:
     """
     Scan trusted skill source directories, embed each skill whose content has
     changed, and upsert into SkillEmbedding.
@@ -133,19 +137,27 @@ def embed_all_skills(native_only: bool = False, force: bool = False) -> list[str
     - Untrusted dirs are always skipped with a warning.
     - force=True: re-embeds all skills regardless of content hash.
 
+    Spec 026:
+    - platform: when set, only embeds skills whose `platforms:` frontmatter
+      includes this platform (or have no `platforms:` field at all), and skips
+      skills that are disabled for the given platform.
+
     Returns list of skill names actually embedded (changed or forced).
     """
-    from agent.skills.discovery import all_skill_dirs, _native_dir
+    from agent.skills.discovery import (
+        all_skill_dirs, _native_dir, iter_skill_dirs,
+        _read_skill_name, skill_matches_platform, get_disabled_skills,
+    )
 
     if native_only:
-        from agent.skills.discovery import iter_skill_dirs
-        dirs_to_scan = [((_native_dir()), True)]
+        dirs_to_scan = [(_native_dir(), True)]
     else:
         dirs_to_scan = [
             (src.path, src.trusted)
             for src in all_skill_dirs(check_db_trust=True)
         ]
 
+    disabled = get_disabled_skills(platform=platform)
     processed: list[str] = []
     seen_names: set[str] = set()
 
@@ -159,18 +171,32 @@ def embed_all_skills(native_only: bool = False, force: bool = False) -> list[str
         if not Path(skills_dir).exists():
             continue
 
-        for skill_dir in sorted(Path(skills_dir).iterdir()):
-            if not skill_dir.is_dir():
-                continue
+        for skill_dir in iter_skill_dirs(Path(skills_dir)):
             skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
                 continue
 
-            # Derive name quickly to check for precedence collision
-            from agent.skills.discovery import _read_skill_name
             name = _read_skill_name(skill_md)
             if name in seen_names:
                 continue  # shadowed by higher-precedence dir
+
+            # Spec 026: platform filtering
+            if platform is not None:
+                try:
+                    text = skill_md.read_text(encoding="utf-8-sig")
+                    meta: dict = {}
+                    if text.startswith("---"):
+                        parts = text.split("---", 2)
+                        if len(parts) >= 3:
+                            meta = yaml.safe_load(parts[1]) or {}
+                    if not skill_matches_platform(meta, platform):
+                        continue
+                except Exception:
+                    pass
+
+            if name in disabled:
+                continue
+
             seen_names.add(name)
 
             if force:
@@ -216,54 +242,165 @@ def find_relevant_skills(query: str, threshold: float = SIMILARITY_THRESHOLD) ->
         return []
 
 
-def build_skill_catalog() -> str:
+def _read_category_description(category_dir: Path) -> str:
+    """
+    Spec 026: Read the DESCRIPTION.md for a category directory.
+    Returns the `description` frontmatter field, or empty string if absent.
+    """
+    desc_md = category_dir / "DESCRIPTION.md"
+    if not desc_md.exists():
+        return ""
+    try:
+        text = desc_md.read_text(encoding="utf-8-sig")
+        if text.startswith("---"):
+            parts = text.split("---", 2)
+            if len(parts) >= 3:
+                meta = yaml.safe_load(parts[1]) or {}
+                return (meta.get("description") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def skill_catalog_for_prompt(
+    base_dir: Path | None = None,
+    platform: str | None = None,
+) -> str:
+    """
+    Spec 026: Build a Tier 0 + Tier 1 skill catalog for system prompt injection.
+
+    Tier 0: Category summary — "Available skill categories: cim (4 skills): ..."
+    Tier 1: Per-skill bullet — "**name**: description"
+
+    When base_dir is given, scans only that directory (for testing).
+    Otherwise uses all trusted skill source directories via collect_all_skills().
+
+    Skills without a category are listed in Tier 1 but excluded from Tier 0.
+    """
+    from agent.models import Skill
+    from agent.skills.discovery import collect_all_skills, _get_category_from_path
+
+    try:
+        disabled_db = set(Skill.objects.filter(enabled=False).values_list("name", flat=True))
+    except Exception:
+        disabled_db = set()
+
+    try:
+        if base_dir is not None:
+            # Test mode: scan base_dir directly without DB trust checks
+            from agent.skills.discovery import iter_skill_dirs, _read_skill_name, skill_matches_platform, get_disabled_skills
+            disabled_env = get_disabled_skills(platform=platform)
+            all_skills: list[dict] = []
+            for skill_dir in iter_skill_dirs(base_dir):
+                skill_md = skill_dir / "SKILL.md"
+                name = _read_skill_name(skill_md)
+                category = _get_category_from_path(skill_md, base_dir)
+                try:
+                    text = skill_md.read_text(encoding="utf-8-sig")
+                    meta: dict = {}
+                    if text.startswith("---"):
+                        parts = text.split("---", 2)
+                        if len(parts) >= 3:
+                            meta = yaml.safe_load(parts[1]) or {}
+                    description = (meta.get("description") or "").strip()
+                    if platform is not None and not skill_matches_platform(meta, platform):
+                        continue
+                except Exception:
+                    description = ""
+                if name in disabled_db or name in disabled_env:
+                    continue
+                all_skills.append({
+                    "name": name,
+                    "description": description,
+                    "skill_dir": skill_dir,
+                    "source_dir": base_dir,
+                    "trusted": True,
+                    "category": category,
+                })
+        else:
+            raw_skills = collect_all_skills(check_db_trust=True, platform=platform)
+            all_skills = []
+            for skill_info in raw_skills:
+                if not skill_info["trusted"]:
+                    continue
+                name = skill_info["name"]
+                if name in disabled_db:
+                    continue
+                skill_md = skill_info["skill_dir"] / "SKILL.md"
+                try:
+                    text = skill_md.read_text(encoding="utf-8-sig")
+                    meta = {}
+                    if text.startswith("---"):
+                        parts = text.split("---", 2)
+                        if len(parts) >= 3:
+                            meta = yaml.safe_load(parts[1]) or {}
+                    description = (meta.get("description") or "").strip()
+                except Exception:
+                    description = ""
+                all_skills.append({**skill_info, "description": description})
+    except Exception:
+        return ""
+
+    if not all_skills:
+        return ""
+
+    # ── Tier 0: category summary ──────────────────────────────────────────
+    # Group categorised skills; collect base_dir → category_dir mapping
+    category_skills: dict[str, list[dict]] = {}
+    uncategorised: list[dict] = []
+    for s in all_skills:
+        cat = s.get("category")
+        if cat:
+            category_skills.setdefault(cat, []).append(s)
+        else:
+            uncategorised.append(s)
+
+    tier0_lines: list[str] = []
+    if category_skills:
+        tier0_lines.append("Available skill categories:")
+        for cat in sorted(category_skills):
+            count = len(category_skills[cat])
+            # Try to read DESCRIPTION.md from the category dir
+            # skill_dir is base_dir/cat/skill-name, so category dir = skill_dir.parent
+            sample_skill_dir = category_skills[cat][0]["skill_dir"]
+            cat_dir = sample_skill_dir.parent
+            desc = _read_category_description(cat_dir)
+            count_str = f"{count} skill{'s' if count != 1 else ''}"
+            if desc:
+                tier0_lines.append(f"- {cat} ({count_str}): {desc}")
+            else:
+                tier0_lines.append(f"- {cat} ({count_str})")
+
+    # ── Tier 1: per-skill bullets ─────────────────────────────────────────
+    skill_lines: list[str] = []
+    for s in all_skills:
+        if s["description"]:
+            skill_lines.append(f"- **{s['name']}**: {s['description']}")
+
+    if not skill_lines:
+        return ""
+
+    parts: list[str] = []
+    if tier0_lines:
+        parts.append("\n".join(tier0_lines))
+    parts.append("## Available Skills\n\n" + "\n".join(skill_lines))
+    parts.append(
+        "When a user request matches a skill above, "
+        "the skill's full instructions will be loaded automatically."
+    )
+    return "\n\n".join(parts)
+
+
+def build_skill_catalog(platform: str | None = None) -> str:
     """
     Return a compact skill catalog for injection into the system prompt (Spec 022).
-    Format: one bullet per enabled skill — "**name**: description"
+
+    Spec 026: Delegates to skill_catalog_for_prompt() which includes Tier 0
+    category summary and Tier 1 per-skill bullets. Accepts optional `platform`
+    to filter skills by interface.
 
     Spec 023: spans all trusted skill source directories.
     Excludes disabled and untrusted skills.
     """
-    from agent.models import Skill
-    from agent.skills.discovery import collect_all_skills
-
-    try:
-        disabled = set(Skill.objects.filter(enabled=False).values_list("name", flat=True))
-    except Exception:
-        disabled = set()
-
-    lines: list[str] = []
-    try:
-        all_skills = collect_all_skills(check_db_trust=True)
-    except Exception:
-        return ""
-
-    for skill_info in all_skills:
-        if not skill_info["trusted"]:
-            continue
-        name = skill_info["name"]
-        if name in disabled:
-            continue
-        skill_md = skill_info["skill_dir"] / "SKILL.md"
-        try:
-            text = skill_md.read_text(encoding="utf-8")
-            meta: dict = {}
-            if text.startswith("---"):
-                parts = text.split("---", 2)
-                if len(parts) >= 3:
-                    meta = yaml.safe_load(parts[1]) or {}
-            description = (meta.get("description") or "").strip()
-            if description:
-                lines.append(f"- **{name}**: {description}")
-        except Exception:
-            continue
-
-    if not lines:
-        return ""
-    return (
-        "## Available Skills\n\n"
-        + "\n".join(lines)
-        + "\n\nWhen a user request matches a skill above, "
-        "the skill's full instructions will be loaded automatically."
-    )
+    return skill_catalog_for_prompt(platform=platform)
 

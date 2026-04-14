@@ -55,12 +55,30 @@
 
     {# Input bar #}
     <div class="flex-shrink-0 px-4 py-4 border-t border-white/10"
-         x-data="chatInput('{% url 'chat:cancel-run' pk=conversation.id %}')"
+         x-data="chatInput('{% url 'chat:cancel-run' pk=conversation.id %}', '{% url 'agent:api-skills' %}')"
          @runCancelled.window="onCancelled()"
          x-init="
            document.body.addEventListener('htmx:afterSwap', (e) => onAfterSwap(e));
            document.body.addEventListener('runCancelled', () => onCancelled());
          ">
+
+      {# Slash-command dropdown #}
+      <div x-show="slashOpen && filteredSkills.length > 0"
+           x-cloak
+           class="max-w-3xl mx-auto mb-2 rounded-xl border border-white/10 overflow-hidden shadow-xl"
+           style="background-color: #2a2b2d;">
+        <ul>
+          <template x-for="(skill, i) in filteredSkills" :key="skill.name">
+            <li @mousedown.prevent="selectSkill(skill)"
+                :class="i === slashIndex ? 'bg-white/10' : 'hover:bg-white/5'"
+                class="flex items-start gap-3 px-4 py-2.5 cursor-pointer transition-colors">
+              <span class="text-xs font-mono text-blue-300 mt-0.5 flex-shrink-0" x-text="'/' + skill.name"></span>
+              <span class="text-xs text-gray-400 truncate" x-text="skill.description"></span>
+            </li>
+          </template>
+        </ul>
+      </div>
+
       <form id="message-form"
             hx-post="{% url 'chat:message-create' conversation_pk=conversation.id %}"
             hx-target="#message-list"
@@ -74,9 +92,11 @@
         <textarea name="content"
                   id="message-input"
                   rows="1"
-                  placeholder="Message…"
+                  placeholder="Message… (type / for skills)"
                   required
                   :disabled="running"
+                  @input="onTextInput($event)"
+                  @keydown="onTextKeydown($event)"
                   class="flex-1 resize-none rounded-2xl px-4 py-3 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-white/20 text-white placeholder-gray-500 border border-white/10"
                   style="background-color: #40414f; max-height: 160px; overflow-y: auto;"
         ></textarea>
@@ -204,12 +224,98 @@
 
 <script>
 // Alpine component for the input bar
-function chatInput(cancelUrl) {
+function chatInput(cancelUrl, skillsUrl) {
   return {
     running: false,
 
+    // Slash-command state
+    skills: [],
+    slashOpen: false,
+    slashQuery: '',
+    slashIndex: 0,
+
+    get filteredSkills() {
+      const q = this.slashQuery.toLowerCase();
+      const all = this.skills;
+      if (!q) return all.slice(0, 10);
+      return all.filter(s =>
+        s.name.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q)
+      ).slice(0, 10);
+    },
+
+    async _loadSkills() {
+      if (this.skills.length > 0) return;
+      try {
+        const resp = await fetch(skillsUrl);
+        const data = await resp.json();
+        this.skills = data.skills || [];
+      } catch (_) {}
+    },
+
+    onTextInput(e) {
+      const ta = e.target;
+      // Auto-expand
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+      // Slash detection: look for /word at cursor
+      const before = ta.value.slice(0, ta.selectionStart);
+      const m = before.match(/(^|\s)\/(\S*)$/);
+      if (m) {
+        this.slashQuery = m[2];
+        this.slashIndex = 0;
+        this.slashOpen = true;
+        this._loadSkills();
+      } else {
+        this.slashOpen = false;
+      }
+    },
+
+    onTextKeydown(e) {
+      if (this.slashOpen && this.filteredSkills.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.slashIndex = Math.min(this.slashIndex + 1, this.filteredSkills.length - 1);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.slashIndex = Math.max(this.slashIndex - 1, 0);
+          return;
+        }
+        if (e.key === 'Tab' || (e.key === 'Enter' && this.filteredSkills.length > 0 && this.slashOpen)) {
+          e.preventDefault();
+          this.selectSkill(this.filteredSkills[this.slashIndex]);
+          return;
+        }
+        if (e.key === 'Escape') {
+          this.slashOpen = false;
+          return;
+        }
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !this.slashOpen) {
+        e.preventDefault();
+        document.getElementById('message-form').requestSubmit();
+      }
+    },
+
+    selectSkill(skill) {
+      const ta = document.getElementById('message-input');
+      const cursor = ta.selectionStart;
+      const before = ta.value.slice(0, cursor);
+      const after = ta.value.slice(cursor);
+      // Replace the trailing /query with /skill-name (keep a space after)
+      const newBefore = before.replace(/(^|\s)\/\S*$/, (m, ws) => ws + '/' + skill.name + ' ');
+      ta.value = newBefore + after;
+      const pos = newBefore.length;
+      ta.setSelectionRange(pos, pos);
+      this.slashOpen = false;
+      ta.focus();
+    },
+
     onSend() {
       this.running = true;
+      this.slashOpen = false;
       const ta = document.getElementById('message-input');
       ta.value = '';
       ta.style.height = 'auto';
@@ -217,28 +323,20 @@ function chatInput(cancelUrl) {
 
     onSendDone(e) {
       if (e.detail.successful) {
-        // Stay in running state — polling (_typing_indicator / _tool_progress)
-        // will swap in the final message; onAfterSwap detects completion.
         document.getElementById('message-list').scrollTop =
           document.getElementById('message-list').scrollHeight;
       } else {
-        // Network error on submit itself — revert immediately.
         this._revert();
       }
     },
 
-    // Called when HTMX swaps new content into #message-list (polling or final reply).
-    // When the typing indicator is replaced by a real message (no more #typing-indicator),
-    // the run is done.
     onAfterSwap(e) {
       if (!this.running) return;
-      // If typing-indicator is no longer in the DOM, the run finished normally.
       if (!document.getElementById('typing-indicator')) {
         this._revert();
       }
     },
 
-    // HX-Trigger: runCancelled fires here after the cancel POST.
     onCancelled() {
       this._revert();
     },
@@ -251,7 +349,6 @@ function chatInput(cancelUrl) {
           'HX-Request': 'true',
         },
       }).then(() => {
-        // Remove the typing indicator immediately so the UI looks stopped.
         const ind = document.getElementById('typing-indicator');
         if (ind) ind.remove();
         this._revert();
@@ -269,22 +366,9 @@ function chatInput(cancelUrl) {
 
 (function () {
   const msgList = document.getElementById('message-list');
-  const textarea = document.getElementById('message-input');
 
   function scrollBottom() { msgList.scrollTop = msgList.scrollHeight; }
   scrollBottom();
-
-  textarea.addEventListener('input', function () {
-    this.style.height = 'auto';
-    this.style.height = Math.min(this.scrollHeight, 160) + 'px';
-  });
-
-  textarea.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      document.getElementById('message-form').requestSubmit();
-    }
-  });
 
   msgList.addEventListener('htmx:afterSwap', scrollBottom);
 
@@ -306,7 +390,7 @@ function chatInput(cancelUrl) {
       var titleAttr = title ? ' title="' + title + '"' : '';
       return '<img src="' + (href || '') + '" alt="' + (text || '') + '"' + titleAttr + '>';
     };
-    marked.setOptions({ renderer: renderer });
+    marked.setOptions({ renderer: renderer, breaks: true, gfm: true });
   })();
 
   function renderMarkdown() {
@@ -321,6 +405,10 @@ function chatInput(cancelUrl) {
       }
       el.innerHTML = marked.parse(src);
       el.dataset.rendered = '1';
+      // Apply syntax highlighting to any code blocks
+      el.querySelectorAll('pre code').forEach(function(block) {
+        hljs.highlightElement(block);
+      });
     });
   }
   document.addEventListener('htmx:afterSwap', renderMarkdown);

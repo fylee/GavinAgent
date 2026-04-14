@@ -8,14 +8,97 @@
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
   <style>
     [x-cloak] { display: none !important; }
+
+    /* ── Markdown content styling ── */
+    .md-content { line-height: 1.7; color: #d1d5db; }
+
+    .md-content h1, .md-content h2, .md-content h3,
+    .md-content h4, .md-content h5, .md-content h6 {
+      font-weight: 600 !important; color: #f3f4f6 !important;
+      margin-top: 1.25rem; margin-bottom: 0.5rem;
+    }
+    .md-content h1 { font-size: 1.35rem !important; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.4rem; }
+    .md-content h2 { font-size: 1.15rem !important; border-bottom: 1px solid rgba(255,255,255,0.07); padding-bottom: 0.25rem; }
+    .md-content h3 { font-size: 1.05rem !important; }
+    .md-content h4 { font-size: 0.95rem !important; color: #e5e7eb !important; }
+
+    .md-content p { margin-bottom: 0.75rem; }
+    .md-content p:last-child { margin-bottom: 0; }
+
+    .md-content ul, .md-content ol { padding-left: 1.5rem; margin-bottom: 0.75rem; }
+    .md-content ul { list-style-type: disc !important; }
+    .md-content ol { list-style-type: decimal !important; }
+    .md-content li { margin-bottom: 0.3rem; }
+    .md-content li > ul, .md-content li > ol { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+
+    .md-content strong, .md-content b { font-weight: 700 !important; color: #f9fafb !important; }
+    .md-content em { font-style: italic; color: #e5e7eb; }
+
+    .md-content code {
+      font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
+      background-color: rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.08);
+      padding: 0.1rem 0.4rem;
+      border-radius: 0.3rem;
+      font-size: 0.82em;
+      color: #e2e8f0;
+    }
+    .md-content pre {
+      background-color: #1e1f22;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 0.6rem;
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      margin: 0.75rem 0;
+    }
+    .md-content pre code {
+      background: none; border: none; padding: 0;
+      font-size: 0.82rem; color: inherit;
+    }
+
+    .md-content blockquote {
+      border-left: 3px solid rgba(255,255,255,0.2);
+      padding: 0.25rem 0 0.25rem 1rem;
+      color: #9ca3af; font-style: italic;
+      margin: 0.75rem 0;
+      background-color: rgba(255,255,255,0.02);
+      border-radius: 0 0.3rem 0.3rem 0;
+    }
+
+    .md-content table {
+      width: 100%; border-collapse: collapse;
+      margin: 0.75rem 0; font-size: 0.85rem;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 0.5rem; overflow: hidden;
+    }
+    .md-content th {
+      background-color: rgba(255,255,255,0.06);
+      padding: 0.5rem 0.75rem; text-align: left;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+      font-weight: 600 !important; color: #e5e7eb !important;
+    }
+    .md-content td {
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .md-content tr:last-child td { border-bottom: none; }
+    .md-content tr:nth-child(even) td { background-color: rgba(255,255,255,0.02); }
+
+    .md-content a { color: #60a5fa; text-decoration: underline; }
+    .md-content a:hover { color: #93c5fd; }
+
+    .md-content hr {
+      border: none; border-top: 1px solid rgba(255,255,255,0.1);
+      margin: 1.25rem 0;
+    }
+
     .md-content img {
-      max-width: 100%;
-      border-radius: 0.5rem;
-      margin-top: 0.5rem;
-      margin-bottom: 0.5rem;
-      display: block;
+      max-width: 100%; border-radius: 0.5rem;
+      margin: 0.5rem 0; display: block;
     }
   </style>
   {% block extra_head %}{% endblock %}
