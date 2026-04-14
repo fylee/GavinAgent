@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Django-based AI agent platform with real-time chat, autonomous agent execution via LangGraph, MCP server integration, a workspace-driven skill system, and vector memory. Designed around HTMX for frontend interactivity and Celery for async task processing.
+A Django-based AI agent platform with real-time chat, autonomous agent execution via LangGraph, MCP server integration, a multi-source embedding-routed skill system, a RAG knowledge base, and vector memory. Designed around HTMX for frontend interactivity and Celery for async task processing.
 
 ---
 
@@ -37,7 +37,7 @@ graph TD
     end
 
     subgraph LLM
-        litellm["LiteLLM (OpenAI / Anthropic / ...)"]
+        litellm["LiteLLM (OpenAI / Anthropic / Azure / Ollama)"]
     end
 
     subgraph MCP["MCP Servers"]
@@ -66,25 +66,33 @@ graph TD
 - `Message` — individual messages with role (user/assistant/system/tool) and token counts
 
 **Key views** (all HTMX-enabled)
-- `ConversationDetailView` — full chat interface
+- `ConversationDetailView` — full chat interface with markdown rendering and slash-command autocomplete
 - `MessageCreateView` — saves user message, fires `message_created` signal
-- `MessageStreamView` — polling endpoint; returns typing indicator or assistant reply
+- `MessageStreamView` — polling endpoint; returns typing indicator or assistant reply; pushes OOB title swaps when title is first generated
 - `ConversationAgentToggleView` — enable/disable agent for a conversation
+
+**Chat UI features**
+- Markdown rendering (marked.js + highlight.js for code blocks)
+- Slash-command autocomplete (`/` prefix shows available commands)
+- LLM-generated conversation titles — generated on the first exchange via a lightweight LLM call in `_generate_conversation_title()` then pushed via HTMX OOB swap to both the chat heading and the sidebar entry
 
 **Flow**: User types → `MessageCreateView` saves message → fires signal → `agent.signals.on_message_created` creates `AgentRun` and queues Celery task → `MessageStreamView` polls until reply appears.
 
 ---
 
-### `agent` — Agent orchestration, tools, memory, MCP
+### `agent` — Agent orchestration, tools, memory, MCP, skills, knowledge
 
 **Models**
 - `Agent` — name, system prompt, tools list, model, `is_default`
 - `AgentRun` — execution record: status, input/output, graph_state (JSON), triggered_skills
-- `ToolExecution` — audit log per tool call: status, input, output, duration_ms, approval
+- `ToolExecution` — audit log per tool call: status, input, output, duration_ms, parallel_group, approval
 - `MCPServer` — MCP server config (transport, command/url, encrypted env, auto_approve_tools)
 - `Memory` — long-term memory paragraphs with pgvector embeddings (1536-dim)
 - `LLMUsage` — token counts and estimated cost per LLM call
-- `Skill` — registry of installed skills with path and enabled flag
+- `Skill` — registry of installed skills with path, source, enabled flag, trust status
+- `SkillEmbedding` — pgvector embedding (1536-dim) per skill for semantic routing
+- `TrustedSkillSource` — allowlist of non-workspace skill source directories
+- `KnowledgeDocument` — RAG knowledge base entries with URL/file source and pgvector embeddings
 - `HeartbeatLog` — records each heartbeat trigger
 
 **Execution**: `AgentRunner` → `build_graph()` → LangGraph `StateGraph.invoke()`. See [agent-loop.md](agent-loop.md) for the full flowchart.
@@ -124,58 +132,141 @@ flowchart TD
 
 ## System Prompt Assembly
 
-Built in `_build_system_context(query)` on every LLM call:
+Built in `_build_system_context(query)` on every LLM call using a **parallel ThreadPoolExecutor** (4 workers) to fetch skills, memory, knowledge, and MCP resources concurrently:
 
 | Order | Content | Source |
 |-------|---------|--------|
-| 1 | Current datetime | `datetime.now()` |
+| 1 | Current datetime + timezone | `datetime.now()` |
 | 2 | Universal rules | `workspace/AGENTS.md` |
 | 3 | Persona/tone | `workspace/SOUL.md` |
-| 4 | Triggered skills | `workspace/skills/*/SKILL.md` (keyword-matched) |
-| 5 | Relevant memories | pgvector top-5 similarity search |
-| 6 | MCP resources | `always_include` resource URIs |
+| 4 | Skill catalog (compact index of all skills) | `build_skill_catalog()` |
+| 5 | Matched skill bodies | `workspace/skills/*/SKILL.md` + `rules/*.md` appended |
+| 6 | Relevant memories | pgvector top-5 similarity search |
+| 7 | MCP resources | `always_include` resource URIs |
+| 8 | MCP server connectivity status | `MCPConnectionPool` + `MCPRegistry` |
+| 9 | Reference knowledge | RAG retrieval from `KnowledgeDocument` |
+| 10 | Tool output formatting rule | Static instruction |
+| 11 | Parallel tool call instruction | Static instruction |
+| 12 | Reasoning transparency instruction | Static instruction |
+
+> **Parallel assembly**: steps 5 (skills), 6 (memory), 9 (knowledge), and 7 (MCP resources) are fetched concurrently via `ThreadPoolExecutor(max_workers=4)`. Total wall time ≈ slowest single lookup.
 
 ---
 
 ## Skill System
 
-Skills live in `workspace/skills/<name>/SKILL.md` with YAML frontmatter:
+### Multi-Source Discovery (spec 023)
+
+Skills are discovered from multiple source directories in priority order:
+
+| Priority | Source | Trust |
+|----------|--------|-------|
+| 1 (highest) | `agent/workspace/skills/` | Always trusted (native workspace) |
+| 2 | `.agents/skills/` (project root) | Requires `TrustedSkillSource` DB record |
+| 3 | `~/.agents/skills/` (user home) | Requires `TrustedSkillSource` DB record |
+| 4 | `~/.claude/skills/` (Claude Code) | Requires `TrustedSkillSource` DB record |
+| 5 | `AGENT_EXTRA_SKILLS_DIRS` (env var) | Requires `TrustedSkillSource` DB record |
+
+`collect_all_skills(check_db_trust=True)` merges all sources; skills from a higher-priority source shadow same-named skills from lower-priority sources. Untrusted skills appear in the Skills UI but are **never injected into the LLM context**.
+
+### Embedding-Based Routing (spec 022)
+
+Skill selection uses semantic similarity as the primary routing signal:
+
+- **Model**: `openai/text-embedding-3-small` (1536 dimensions)
+- **Storage**: `SkillEmbedding` table with HNSW cosine index
+- **Threshold**: `SIMILARITY_THRESHOLD = 0.55` (configurable via `AGENT_SKILL_SIMILARITY_THRESHOLD`)
+- **Embedded text**: `name + description + triggers (first 20) + examples (first 10) + body[:500]`
+- **Fallback 1**: keyword match against `metadata.triggers`
+- **Fallback 2**: regex match against `metadata.trigger_patterns`
+
+`rules/*.md` files in a skill's directory are appended to the skill body **at injection time** (not embed time), so they do not pollute routing embeddings.
+
+### Skill YAML Frontmatter
 
 ```yaml
 ---
 name: web-research
-description: Searching the web and finding current information
-triggers: [search, web, browse, news, price, statistic]
-version: 1
+description: Searching the web for current information
+metadata:
+  triggers: [search, web, browse, news, price]
+  trigger_patterns: ["find .* online", "look up"]
+  examples:
+    - "What's the latest news about..."
+    - "Search for the price of..."
+  version: 1
 ---
-
 ## Full instructions here...
 ```
 
-- **Trigger matching**: keywords checked (case-insensitive substring) against the user query
-- **Matched skills**: full body injected into system prompt; all others shown as compact index
-- **Handler skills**: optional `handler.py` with `run()` exposes skill as an LLM-callable tool
-- **Triggered skills** stored in `AgentRun.triggered_skills`, shown as badges in the run UI
+GavinAgent-specific fields (`triggers`, `examples`, `trigger_patterns`, `version`) live inside `metadata:`. Top-level lists are accepted for backward compatibility.
 
-Built-in skills: `charts`, `web-research`, `data-analysis`.
+### Sync Workflow
+
+```
+agent/workspace/skills/ ──sync_claude_code──► ~/.claude/skills/
+                         ◄──import_skills──── any source directory
+```
+
+- `sync_claude_code` — push workspace skills to `~/.claude/skills/` (Anthropic Claude Code format)
+- `import_skills` — import skills from any source dir into workspace (with YAML compliance fixing)
+
+### Built-in Skills (19 total)
+
+| Skill | Description |
+|-------|-------------|
+| `charts` | Generate matplotlib charts |
+| `web-research` | Web search and URL fetching |
+| `data-analysis` | Statistical analysis on tabular data |
+| `stock-chart` | Historical stock price charts |
+| `weather` | Current weather and forecast |
+| `workflow-management` | Create/update scheduled workflows |
+| `find-skills` | Discover and install agent skills |
+| `Skill-Development` | Create and improve skills |
+| `edwm-wip-movement` | FAB production WIP movement queries |
+| `pdf` | Extract text from PDF files |
+| `xlsx` | Read and analyse Excel files |
+| `sql-query` | Execute SQL against the session DB |
+| `image-analysis` | Analyse and describe images |
+| `code-review` | Review code for bugs and issues |
+| `git-workflow` | Git operations and branch management |
+| `api-testing` | Test REST APIs |
+| `document-writer` | Draft structured documents |
+| `data-pipeline` | ETL and data transformation |
+| `notification` | Send notifications via various channels |
 
 ---
+
+## RAG Knowledge Base
+
+`KnowledgeDocument` model stores documents ingested from URLs or files. Each document is chunked and embedded into pgvector. During system prompt assembly, `_build_knowledge_section(query)` calls `agent.rag.retriever.retrieve_knowledge()` (cosine similarity search) and injects the top results as a "## Reference Knowledge" section.
+
+**Management**: `ingest_documents` management command; `/agent/knowledge/` UI for add/toggle/reingest/delete.
+
+---
+
+
 
 ## Tool System
 
 Tools are auto-discovered from `agent/tools/*.py` (any `BaseTool` subclass):
 
-| Tool | Description | Approval |
-|------|-------------|----------|
-| `file_read` | Read workspace files | Auto |
-| `file_write` | Write workspace files | Auto |
-| `web_read` | Fetch URLs (dedup enforced) | Auto |
-| `shell` | Execute shell commands | Requires approval |
-| `api_get` / `api_post` | HTTP requests | Auto |
-| `get_datetime` | Current date/time with timezone | Auto |
-| `chart` | Generate matplotlib charts | Auto |
+| Tool | Description | Execution |
+|------|-------------|-----------|
+| `file_read` | Read workspace files | Parallel |
+| `file_write` | Write workspace files | Serial |
+| `web_read` | Fetch URLs (dedup enforced) | Parallel |
+| `shell` | Execute shell commands | Serial |
+| `api_get` / `api_post` | HTTP requests | Parallel |
+| `get_datetime` | Current date/time with timezone | Parallel |
+| `chart` | Generate matplotlib charts | Parallel |
+| `web_search` | Search the web via SearXNG | Parallel |
+| `skill` | Invoke a named skill as a sub-agent | Parallel |
+| `workflow` | Create/update scheduled workflows | Parallel |
 
 MCP tools are discovered dynamically from connected MCP servers and registered alongside built-ins.
+
+**Parallel execution**: `execute_tools` separates tools into a parallel batch (`ThreadPoolExecutor`, max 8 workers, configurable via `AGENT_TOOL_PARALLELISM`) and a serial queue (`file_write`, `shell`). Serial tools run after the parallel batch completes.
 
 ---
 
@@ -184,7 +275,7 @@ MCP tools are discovered dynamically from connected MCP servers and registered a
 | Task | Trigger | Description |
 |------|---------|-------------|
 | `execute_agent_run` | Signal / tool approval | Run or resume a LangGraph agent run |
-| `process_chat_message` | User message (no agent) | Call LLM for plain chat reply |
+| `process_chat_message` | User message (no agent) | Call LLM for plain chat reply; generates conversation title on first message |
 | `heartbeat_task` | Celery Beat (every 30 min) | Read `HEARTBEAT.md`, create AgentRun for unchecked items |
 | `reembed_memory_task` | Manual / file write | Re-embed changed paragraphs in `MEMORY.md` into pgvector |
 
@@ -221,6 +312,11 @@ MCP tools are discovered dynamically from connected MCP servers and registered a
 - Per-server `auto_approve_tools` list
 - Encrypted env vars (`EncryptedJSONField` using Fernet)
 - Connection status tracked in `MCPServer.connection_status`
+- Auto-disable after 10 consecutive connection failures (spec 024)
+- Session expiry detection — reconnects on 401/403 or SSE session-expired events (spec 024)
+- `_unwrap_error()` helper unwraps Python 3.11+ `BaseExceptionGroup` to expose the root cause in logs and UI
+
+**GavinAgent as MCP server**: `mcp_server.py` exposes GavinAgent's own tools over SSE (`/mcp/sse/`) so external clients (e.g. Claude Desktop, Claude Code) can use them.
 
 ---
 
@@ -284,12 +380,21 @@ sequenceDiagram
 /agent/runs/<id>/                              Run detail + tool trace
 /agent/runs/<id>/status/                       HTMX polling fragment
 /agent/agents/                                 Agent CRUD
-/agent/tools/                                  Tool registry
-/agent/skills/                                 Skill management
+/agent/tools/                                  Tool registry + policy
+/agent/skills/                                 Skill management (multi-source tabs)
+/agent/skills/sync-claude/                     Sync workspace → ~/.claude/skills/
+/agent/skills/import-from-project/             Import skills from source directory
+/agent/skills/embed-all/                       Re-embed all skills
+/agent/api/skills/                             JSON skill list API
 /agent/memory/                                 Memory editor + search
 /agent/mcp/                                    MCP server config
+/agent/knowledge/                              RAG knowledge base management
 /agent/workspace/<filename>/                   Workspace file editor
+/agent/workflows/                              Scheduled workflow CRUD
 /agent/monitoring/                             Usage + health
+/agent/logs/                                   Agent run logs
+
+/mcp/sse/                                      GavinAgent MCP server (SSE)
 ```
 
 ---
@@ -302,9 +407,10 @@ sequenceDiagram
 | Alpine.js | 3.14.1 | Local UI state (toggles, collapse) |
 | Tailwind CSS | CDN | Styling |
 | marked.js | CDN | Markdown rendering in chat |
+| highlight.js | CDN | Syntax highlighting in code blocks |
 
 **Patterns**:
-- `hx-swap-oob` — update elements outside the main swap target (status badge, sidebar title)
+- `hx-swap-oob` — update elements outside the main swap target (status badge, sidebar title, conversation title)
 - `hx-trigger="every 2s"` — polling for run status and message stream
 - Template convention: `_partial.html` prefix for HTMX fragments
 
@@ -319,14 +425,21 @@ agent/workspace/
 ├── HEARTBEAT.md           Periodic task checklist (- [ ] format)
 ├── memory/
 │   └── MEMORY.md          Long-term memory (embedded into pgvector)
-├── skills/
-│   ├── charts/SKILL.md
-│   ├── web-research/SKILL.md
-│   └── data-analysis/SKILL.md
-└── chart_*.png            Generated chart images
+└── skills/
+    ├── charts/
+    │   ├── SKILL.md
+    │   └── rules/         Optional rule files appended at injection time
+    ├── web-research/SKILL.md
+    ├── data-analysis/SKILL.md
+    ├── stock-chart/SKILL.md
+    ├── weather/SKILL.md
+    ├── workflow-management/SKILL.md
+    ├── find-skills/SKILL.md
+    ├── Skill-Development/SKILL.md
+    └── ... (19 skills total)
 ```
 
-All files are editable via the Agent UI at `/agent/workspace/`.
+All files are editable via the Agent UI at `/agent/workspace/`. Chart images (`chart_*.png`) are stored here too.
 
 ---
 
@@ -347,8 +460,30 @@ Key environment variables:
 | `FERNET_KEY` | MCP env encryption |
 | `TELEGRAM_BOT_TOKEN` | Telegram integration |
 | `LANGSMITH_API_KEY` | LangSmith tracing (optional) |
+| `LANGSMITH_PROJECT` | LangSmith project name (optional) |
+| `AZURE_API_KEY` | Azure OpenAI key |
+| `AZURE_API_BASE` | Azure OpenAI endpoint |
+| `AZURE_API_VERSION` | Azure OpenAI API version |
 | `MAX_TOOL_OUTPUT_CHARS` | Tool output truncation (default: 20,000) |
 | `AGENT_CONTEXT_BUDGET_TOKENS` | History truncation budget (default: 8,000) |
+| `AGENT_HISTORY_WINDOW` | Max messages kept in history (default: 10) |
+| `AGENT_TOOL_PARALLELISM` | Max parallel tool workers (default: 8) |
+| `AGENT_SKILL_SIMILARITY_THRESHOLD` | Skill routing cosine threshold (default: 0.55) |
+| `AGENT_EXTRA_SKILLS_DIRS` | Extra skill source directories (colon-separated) |
+| `AGENT_TIMEZONE` | Timezone injected into system prompt (default: UTC) |
+
+---
+
+## Management Commands
+
+| Command | Description |
+|---------|-------------|
+| `sync_claude_code` | Push workspace skills to `~/.claude/skills/` (Anthropic format) |
+| `import_skills` | Import skills from a source directory into workspace |
+| `embed_skills` | Embed all workspace skills into pgvector |
+| `ingest_documents` | Ingest documents into the RAG knowledge base |
+| `reembed_memory` | Re-embed changed paragraphs in `MEMORY.md` |
+| `sync_claude_code --skills-only` | Only sync skills (skip other workspace files) |
 
 ---
 
@@ -361,27 +496,48 @@ config/
 
 chat/
   models.py              Conversation, Message
-  views.py               HTMX views
+  views.py               HTMX views (OOB title swaps in MessageStreamView)
   services.py            ChatService (LLM reply)
   signals.py             message_created signal
+  tasks.py               process_chat_message, _generate_conversation_title
 
 agent/
-  models.py              Agent, AgentRun, MCPServer, Memory, ...
-  views.py               Dashboard, CRUD, approval, monitoring
+  models.py              Agent, AgentRun, MCPServer, Memory, Skill, SkillEmbedding,
+                         TrustedSkillSource, KnowledgeDocument, LLMUsage, ...
+  views.py               Dashboard, CRUD, approval, monitoring, skills UI
   runner.py              AgentRunner (sync executor + resumption)
   signals.py             on_message_created → trigger agent run
   tasks.py               Celery tasks
   graph/
     graph.py             LangGraph StateGraph + routing
-    nodes.py             Node functions + _build_system_context
+    nodes.py             Node functions + _build_system_context (parallel assembly)
     state.py             AgentState TypedDict
   tools/                 BaseTool implementations (auto-discovered)
-  skills/                SkillLoader, SkillRegistry
-  mcp/                   MCPConnectionPool, client, registry
-  memory/                long_term.py (pgvector), short_term.py
-  workspace/             AGENTS.md, SOUL.md, skills/
+  skills/
+    discovery.py         collect_all_skills() — multi-source with trust model
+    embeddings.py        find_relevant_skills(), _skill_embed_text(), build_skill_catalog()
+    loader.py            SkillLoader — reads SKILL.md, parses frontmatter
+    registry.py          SkillRegistry — in-memory skill index
+  mcp/
+    client.py            SSE/stdio MCP client, _unwrap_error()
+    pool.py              MCPConnectionPool singleton
+    registry.py          MCPRegistry — tool lookup
+  memory/
+    long_term.py         search_long_term() via pgvector
+    short_term.py        In-run working memory
+  rag/
+    retriever.py         retrieve_knowledge() — RAG search
+    ingestor.py          Document ingestion + chunking
+  workspace/             AGENTS.md, SOUL.md, skills/, memory/
+  management/commands/
+    sync_claude_code.py  Push skills to ~/.claude/skills/
+    import_skills.py     Import skills from source directories
+    embed_skills.py      Embed skills into pgvector
+    ingest_documents.py  RAG document ingestion
 
 core/
   llm.py                 get_completion() via LiteLLM
   memory.py              embed_text(), search_memories()
+
+mcp_server.py            GavinAgent as MCP server (SSE endpoint)
 ```
