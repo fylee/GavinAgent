@@ -1,0 +1,49 @@
+{
+  "mcpServers": {
+    "edwm-mcp": {
+      "type": "sse",
+      "url": "http://edwm-mcp.aip/sse",
+      "headers": {},
+      "command": "",
+      "args": [],
+      "env": {},
+      "enabled": true,
+      "description": "EDWM MCP",
+      "auto_approve_tools": [],
+      "auto_approve_resources": false,
+      "always_include_resources": [],
+      "session_dead_error_codes": [-32602],
+      "health_probe_tool": ""
+    },
+    "fab-mcp": {
+      "type": "sse",
+      "url": "http://pilot-aichat/fab-mcp/sse",
+      "headers": {},
+      "command": "",
+      "args": [],
+      "env": {},
+      "enabled": true,
+      "description": "FAB MCP",
+      "auto_approve_tools": [],
+      "auto_approve_resources": false,
+      "always_include_resources": [],
+      "session_dead_error_codes": [],
+      "health_probe_tool": ""
+    },
+    "research-mcp": {
+      "type": "sse",
+      "url": "http://10.6.200.51:11433/sse",
+      "headers": {},
+      "command": "",
+      "args": [],
+      "env": {},
+      "enabled": true,
+      "description": "Research MCP",
+      "auto_approve_tools": [],
+      "auto_approve_resources": false,
+      "always_include_resources": [],
+      "session_dead_error_codes": [],
+      "health_probe_tool": ""
+    }
+  }
+}
