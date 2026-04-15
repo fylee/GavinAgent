@@ -123,6 +123,7 @@ def _format_mcp_tool_listing(server_name: str) -> str:
 def _build_skills_section(
     query: str,
     forced_skill: str | None = None,
+    suppress_skills: bool = False,
 ) -> tuple[str, list[str], list[dict]]:
     """Discover skills across all trusted source directories, match against query
     using embeddings (with keyword fallback), inject body for matched skills.
@@ -133,10 +134,15 @@ def _build_skills_section(
     If *forced_skill* is provided (from a leading /skill-name directive) only that
     skill is injected — all embedding/keyword routing is bypassed.
 
+    If *suppress_skills* is True (e.g. @mcp specified without /skill), return empty
+    immediately — the user wants to target one MCP server, not skill routing.
+
     Returns (section_text, triggered_skill_names, skill_entries, skill_dir_map).
     skill_entries: list of {name, status, match} for context_trace.
     skill_dir_map: {name: skill_dir} for all trusted skills (reused by call_llm).
     """
+    if suppress_skills:
+        return "", [], [], {}
     import re
     import yaml
     from agent.skills.embeddings import find_relevant_skills
@@ -305,6 +311,7 @@ def _build_knowledge_section(query: str) -> tuple[str, list[dict]]:
 def _build_system_context(
     query: str,
     forced_skill: str | None = None,
+    suppress_skills: bool = False,
 ) -> tuple[str, list[str], list[dict], dict]:
     """Assemble system prompt from workspace files, memories, and MCP resources.
 
@@ -338,7 +345,7 @@ def _build_system_context(
     mcp_resources: list[str] = []
 
     def _fetch_skills():
-        return _build_skills_section(query, forced_skill=forced_skill)
+        return _build_skills_section(query, forced_skill=forced_skill, suppress_skills=suppress_skills)
 
     def _fetch_memory():
         try:
@@ -372,14 +379,15 @@ def _build_system_context(
         mcp_resources = f_mcp.result()
     # ── End parallel section ───────────────────────────────────────────────
 
-    # Spec 022: inject skill catalog
-    try:
-        from agent.skills.embeddings import build_skill_catalog
-        catalog = build_skill_catalog()
-        if catalog:
-            parts.append(catalog)
-    except Exception:
-        pass
+    # Spec 022: inject skill catalog (suppressed when @mcp-only mode)
+    if not suppress_skills:
+        try:
+            from agent.skills.embeddings import build_skill_catalog
+            catalog = build_skill_catalog()
+            if catalog:
+                parts.append(catalog)
+        except Exception:
+            pass
 
     if skills_section:
         parts.append(skills_section)
@@ -757,9 +765,11 @@ def _persist_first_round_context(
             gs["rag_matches"] = rag_matches
         try:
             from agent.mcp.registry import get_registry as get_mcp_registry
+            forced_mcp = state.get("_forced_mcp") or ""
             mcp_server_names = sorted({
                 entry.server_name
                 for entry in get_mcp_registry().all().values()
+                if not forced_mcp or entry.server_name == forced_mcp
             }) if tools_schema else []
         except Exception:
             mcp_server_names = []
@@ -923,8 +933,11 @@ def assemble_context(state: AgentState) -> dict:
     model = _get_agent_model(state)
     forced_skill = _parse_slash_skill(query)
     forced_mcp = _parse_at_mcp(query)
+    # When @mcp is specified without /skill, suppress all skill routing —
+    # the user wants to target one MCP server only.
+    suppress_skills = bool(forced_mcp) and not forced_skill
     system_content, triggered_skills, rag_matches, context_trace, skill_dir_map = (
-        _build_system_context(query, forced_skill=forced_skill)
+        _build_system_context(query, forced_skill=forced_skill, suppress_skills=suppress_skills)
     )
     if state.get("conversation_id"):
         system_content += f"\n\n---\n\nCurrent conversation ID: `{state['conversation_id']}`"

@@ -359,6 +359,7 @@ class TestAssembleContextSlashSkill:
         mock_ctx.assert_called_once_with(
             "/edwm-wip-movement what is today's move?",
             forced_skill="edwm-wip-movement",
+            suppress_skills=False,
         )
 
     def test_no_slash_passes_none(self):
@@ -380,6 +381,7 @@ class TestAssembleContextSlashSkill:
         mock_ctx.assert_called_once_with(
             "what is today's move?",
             forced_skill=None,
+            suppress_skills=False,
         )
 
 
@@ -505,7 +507,29 @@ class TestAssembleContextAtMcp:
 
         ctx_args, ctx_kwargs = mock_ctx.call_args
         assert ctx_kwargs.get("forced_skill") == "edwm-wip-movement"
+        # /skill is present so suppress_skills must be False
+        assert ctx_kwargs.get("suppress_skills") is False
         _, tools_kwargs = mock_tools.call_args
         assert tools_kwargs.get("forced_mcp") == "fab-mcp"
+
+    def test_at_mcp_without_slash_suppresses_skills(self):
+        """@mcp without /skill should suppress skill injection (suppress_skills=True)."""
+        from agent.graph.nodes import assemble_context
+
+        state = {
+            "run_id": "run-1",
+            "agent_id": "agent-1",
+            "input": "@fab-mcp get all lots on hold",
+            "conversation_id": None,
+        }
+        with patch("agent.graph.nodes._build_system_context") as mock_ctx, \
+             patch("agent.graph.nodes._build_tools_schema", return_value=[]), \
+             patch("agent.graph.nodes._get_agent_model", return_value="test-model"):
+            mock_ctx.return_value = ("SYS", [], [], {}, {})
+            assemble_context(state)
+
+        _, ctx_kwargs = mock_ctx.call_args
+        assert ctx_kwargs.get("suppress_skills") is True
+        assert ctx_kwargs.get("forced_skill") is None
 
 
