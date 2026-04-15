@@ -70,10 +70,15 @@
     </div>
   </div>
 
-  {# Status / error #}
+  {# Status / error — show whenever last_error is set, even if server was auto-disabled #}
   {% with status=server.live_status|default:server.connection_status %}
-  {% if status == 'error' and server.last_error %}
-  <p class="text-xs text-red-400 font-mono bg-red-900/10 rounded px-2 py-1">{{ server.last_error|truncatechars:200 }}</p>
+  {% if server.last_error and status != 'connected' %}
+  <div class="rounded px-2 py-1 {% if not server.enabled and server.connection_status == 'error' %}bg-orange-900/10{% else %}bg-red-900/10{% endif %}">
+    {% if not server.enabled and server.connection_status == 'error' %}
+    <p class="text-xs text-orange-400 mb-0.5">⚠ Auto-disabled after repeated connection failures:</p>
+    {% endif %}
+    <p class="text-xs text-red-400 font-mono">{{ server.last_error|truncatechars:300 }}</p>
+  </div>
   {% endif %}
   {% endwith %}
 
