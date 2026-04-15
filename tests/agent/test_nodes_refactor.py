@@ -382,3 +382,130 @@ class TestAssembleContextSlashSkill:
             forced_skill=None,
         )
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _parse_at_mcp / _is_mcp_tools_query / _format_mcp_tool_listing
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestParseAtMcp:
+    def test_at_mcp_anywhere_in_query(self):
+        from agent.graph.nodes import _parse_at_mcp
+        assert _parse_at_mcp("query @fab-mcp something") == "fab-mcp"
+
+    def test_at_mcp_at_start(self):
+        from agent.graph.nodes import _parse_at_mcp
+        assert _parse_at_mcp("@fab-mcp query") == "fab-mcp"
+
+    def test_no_at_returns_none(self):
+        from agent.graph.nodes import _parse_at_mcp
+        assert _parse_at_mcp("plain query without mention") is None
+
+    def test_at_with_dot_in_name(self):
+        from agent.graph.nodes import _parse_at_mcp
+        assert _parse_at_mcp("@my.server do something") == "my.server"
+
+    def test_empty_input_returns_none(self):
+        from agent.graph.nodes import _parse_at_mcp
+        assert _parse_at_mcp("") is None
+
+
+class TestIsMcpToolsQuery:
+    def test_at_mcp_tools_matches(self):
+        from agent.graph.nodes import _is_mcp_tools_query
+        assert _is_mcp_tools_query("@fab-mcp tools") is True
+
+    def test_case_insensitive(self):
+        from agent.graph.nodes import _is_mcp_tools_query
+        assert _is_mcp_tools_query("@fab-mcp TOOLS") is True
+
+    def test_at_mcp_with_other_query_does_not_match(self):
+        from agent.graph.nodes import _is_mcp_tools_query
+        assert _is_mcp_tools_query("@fab-mcp get hold lots") is False
+
+    def test_no_at_returns_false(self):
+        from agent.graph.nodes import _is_mcp_tools_query
+        assert _is_mcp_tools_query("list tools") is False
+
+
+class TestAssembleContextAtMcp:
+    def test_at_mcp_passed_to_build_tools_schema(self):
+        """@mcp-name in input passes forced_mcp to _build_tools_schema."""
+        from agent.graph.nodes import assemble_context
+
+        state = {
+            "run_id": "run-1",
+            "agent_id": "agent-1",
+            "input": "@fab-mcp get all lots on hold",
+            "conversation_id": None,
+        }
+        with patch("agent.graph.nodes._build_system_context") as mock_ctx, \
+             patch("agent.graph.nodes._build_tools_schema") as mock_tools, \
+             patch("agent.graph.nodes._get_agent_model", return_value="test-model"):
+            mock_ctx.return_value = ("SYS", [], [], {}, {})
+            mock_tools.return_value = []
+            assemble_context(state)
+
+        _, kwargs = mock_tools.call_args
+        assert kwargs.get("forced_mcp") == "fab-mcp"
+
+    def test_at_mcp_tools_sets_tool_listing(self):
+        """@mcp-name tools sets _tool_listing in returned state."""
+        from agent.graph.nodes import assemble_context
+
+        state = {
+            "run_id": "run-1",
+            "agent_id": "agent-1",
+            "input": "@fab-mcp tools",
+            "conversation_id": None,
+        }
+        with patch("agent.graph.nodes._build_system_context") as mock_ctx, \
+             patch("agent.graph.nodes._build_tools_schema", return_value=[]), \
+             patch("agent.graph.nodes._get_agent_model", return_value="test-model"), \
+             patch("agent.graph.nodes._format_mcp_tool_listing", return_value="## Tools") as mock_fmt:
+            mock_ctx.return_value = ("SYS", [], [], {}, {})
+            result = assemble_context(state)
+
+        mock_fmt.assert_called_once_with("fab-mcp")
+        assert result.get("_tool_listing") == "## Tools"
+
+    def test_no_at_mcp_no_tool_listing(self):
+        """Plain query does not set _tool_listing."""
+        from agent.graph.nodes import assemble_context
+
+        state = {
+            "run_id": "run-1",
+            "agent_id": "agent-1",
+            "input": "plain query",
+            "conversation_id": None,
+        }
+        with patch("agent.graph.nodes._build_system_context") as mock_ctx, \
+             patch("agent.graph.nodes._build_tools_schema", return_value=[]), \
+             patch("agent.graph.nodes._get_agent_model", return_value="test-model"):
+            mock_ctx.return_value = ("SYS", [], [], {}, {})
+            result = assemble_context(state)
+
+        assert "_tool_listing" not in result
+
+    def test_slash_and_at_mcp_together(self):
+        """Both /skill and @mcp can be combined."""
+        from agent.graph.nodes import assemble_context
+
+        state = {
+            "run_id": "run-1",
+            "agent_id": "agent-1",
+            "input": "/edwm-wip-movement @fab-mcp query today",
+            "conversation_id": None,
+        }
+        with patch("agent.graph.nodes._build_system_context") as mock_ctx, \
+             patch("agent.graph.nodes._build_tools_schema") as mock_tools, \
+             patch("agent.graph.nodes._get_agent_model", return_value="test-model"):
+            mock_ctx.return_value = ("SYS", ["edwm-wip-movement"], [], {}, {})
+            mock_tools.return_value = []
+            assemble_context(state)
+
+        ctx_args, ctx_kwargs = mock_ctx.call_args
+        assert ctx_kwargs.get("forced_skill") == "edwm-wip-movement"
+        _, tools_kwargs = mock_tools.call_args
+        assert tools_kwargs.get("forced_mcp") == "fab-mcp"
+
+

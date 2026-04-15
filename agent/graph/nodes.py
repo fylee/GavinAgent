@@ -83,6 +83,43 @@ def _parse_slash_skill(query: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _parse_at_mcp(query: str) -> str | None:
+    """Return the MCP server name from an @mcp-name directive anywhere in query.
+
+    Supports names that may include hyphens, underscores, and dots — matching
+    the typical MCP server naming convention (e.g. @fab-mcp, @github, @my.server).
+    Returns None if no @mention is present.
+    """
+    import re
+    m = re.search(r"@([A-Za-z0-9_.-]+)", query)
+    return m.group(1) if m else None
+
+
+def _is_mcp_tools_query(query: str) -> bool:
+    """True when the query requests a tool listing: '@mcp-name tools'."""
+    import re
+    return bool(re.search(r"@[A-Za-z0-9_.-]+\s+tools\b", query, re.IGNORECASE))
+
+
+def _format_mcp_tool_listing(server_name: str) -> str:
+    """Return a markdown listing of all tools for the given MCP server."""
+    try:
+        from agent.mcp.registry import get_registry
+        tools = sorted(
+            (e for e in get_registry().all().values() if e.server_name == server_name),
+            key=lambda e: e.tool_name,
+        )
+    except Exception:
+        tools = []
+    if not tools:
+        return f"No tools found for MCP server **`{server_name}`** (server may be disconnected)."
+    lines = [f"## Tools — `{server_name}`\n"]
+    for t in tools:
+        desc = t.description.strip() if t.description else "*(no description)*"
+        lines.append(f"**`{t.tool_name}`**  \n{desc}\n")
+    return "\n".join(lines)
+
+
 def _build_skills_section(
     query: str,
     forced_skill: str | None = None,
@@ -607,10 +644,12 @@ def _build_tools_schema(
     state: dict,
     triggered_skills: list[str],
     skill_dir_map: dict,
+    forced_mcp: str | None = None,
 ) -> list[dict]:
     """Build the list of LLM function schemas for this agent's enabled tools.
 
     skill_dir_map values may be Path objects or str (serialised from state).
+    If *forced_mcp* is provided only tools from that MCP server are included.
     """
     from agent.tools import all_tools
     from agent.models import Agent as AgentModel
@@ -660,7 +699,15 @@ def _build_tools_schema(
 
     try:
         from agent.mcp.registry import get_registry as get_mcp_registry
-        tools_schema.extend(get_mcp_registry().to_llm_schemas())
+        registry = get_mcp_registry()
+        if forced_mcp:
+            tools_schema.extend(
+                entry.to_llm_schema()
+                for entry in registry.all().values()
+                if entry.server_name == forced_mcp
+            )
+        else:
+            tools_schema.extend(registry.to_llm_schemas())
     except Exception:
         pass
 
@@ -875,15 +922,17 @@ def assemble_context(state: AgentState) -> dict:
     query = state.get("input", "")
     model = _get_agent_model(state)
     forced_skill = _parse_slash_skill(query)
+    forced_mcp = _parse_at_mcp(query)
     system_content, triggered_skills, rag_matches, context_trace, skill_dir_map = (
         _build_system_context(query, forced_skill=forced_skill)
     )
     if state.get("conversation_id"):
         system_content += f"\n\n---\n\nCurrent conversation ID: `{state['conversation_id']}`"
     tools_schema = _build_tools_schema(
-        state, triggered_skills=triggered_skills, skill_dir_map=skill_dir_map
+        state, triggered_skills=triggered_skills, skill_dir_map=skill_dir_map,
+        forced_mcp=forced_mcp,
     )
-    return {
+    result: dict = {
         "_system_content": system_content,
         "_triggered_skills": triggered_skills,
         "_skill_dir_map": {k: str(v) for k, v in skill_dir_map.items()},
@@ -891,7 +940,11 @@ def assemble_context(state: AgentState) -> dict:
         "_context_trace": context_trace,
         "_tools_schema": tools_schema,
         "_model": model,
+        "_forced_mcp": forced_mcp or "",
     }
+    if forced_mcp and _is_mcp_tools_query(query):
+        result["_tool_listing"] = _format_mcp_tool_listing(forced_mcp)
+    return result
 
 
 def call_llm(state: AgentState) -> dict:
@@ -901,6 +954,11 @@ def call_llm(state: AgentState) -> dict:
     if _is_cancelled(state["run_id"]):
         logger.info("AgentRun %s cancelled — aborting call_llm", state["run_id"])
         return {"output": "", "pending_tool_calls": []}
+
+    # @mcp tools short-circuit — return pre-formatted listing without calling LLM.
+    tool_listing = state.get("_tool_listing") or ""
+    if tool_listing:
+        return {"output": tool_listing, "pending_tool_calls": []}
 
     # Read context from state (populated by assemble_context).
     # Fall back to rebuilding if empty (e.g. tool-approval resumption with old state).

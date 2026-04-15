@@ -37,3 +37,5 @@ class AgentState(TypedDict):
     _context_trace: NotRequired[dict]
     _tools_schema: NotRequired[list[dict]]
     _model: NotRequired[str]
+    _forced_mcp: NotRequired[str]       # MCP server name from @mcp directive; "" = no constraint
+    _tool_listing: NotRequired[str]     # Pre-formatted tool list for @mcp tools short-circuit
