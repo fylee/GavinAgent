@@ -354,10 +354,21 @@ class MessageStreamView(View):
                     bare_tes = run_tes if (not loop_trace and run_tes) else []
                     run_triggered_skills = completed_run.triggered_skills or []
                     run_mcp_servers = gs.get("mcp_servers_active", [])
+                    # Build unique tool summary: [{name, is_mcp, count, has_error}]
+                    _tool_counts: dict = {}
+                    for te in run_tes:
+                        key = te.display_name
+                        if key not in _tool_counts:
+                            _tool_counts[key] = {"name": key, "is_mcp": te.is_mcp, "count": 0, "has_error": False}
+                        _tool_counts[key]["count"] += 1
+                        if te.status == "error":
+                            _tool_counts[key]["has_error"] = True
+                    unique_tools = list(_tool_counts.values())
                     if run_tes or run_triggered_skills or run_mcp_servers or loop_trace:
                         msg_ctx["run_trace"] = {
                             "tool_executions": bare_tes,
                             "all_tool_executions": run_tes,
+                            "unique_tools": unique_tools,
                             "triggered_skills": run_triggered_skills,
                             "mcp_servers_active": run_mcp_servers,
                             "loop_trace": loop_trace_with_tes,

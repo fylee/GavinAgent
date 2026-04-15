@@ -40,25 +40,23 @@
         {% if run_trace.triggered_skills %}
         <span class="ml-1 px-1.5 py-0 rounded bg-purple-900/50 text-purple-400">{{ run_trace.triggered_skills|length }} skill{{ run_trace.triggered_skills|length|pluralize }}</span>
         {% endif %}
-        {% if run_trace.all_tool_executions %}
-        <span class="px-1.5 py-0 rounded bg-teal-900/50 text-teal-400">{{ run_trace.all_tool_executions|length }} tool{{ run_trace.all_tool_executions|length|pluralize }}</span>
+        {% if run_trace.unique_tools %}
+        <span class="px-1.5 py-0 rounded bg-teal-900/50 text-teal-400">{{ run_trace.unique_tools|length }} tool{{ run_trace.unique_tools|length|pluralize }}</span>
         {% endif %}
         {% if run_trace.loop_trace %}
         <span class="px-1.5 py-0 rounded bg-gray-800 text-gray-400">{{ run_trace.loop_trace|length }} round{{ run_trace.loop_trace|length|pluralize }}</span>
         {% endif %}
       </button>
-      {# Tool name chips — always visible so tools called are immediately apparent #}
-      {% if run_trace.all_tool_executions %}
+      {# Unique tool chips — always visible, deduplicated with call count #}
+      {% if run_trace.unique_tools %}
       <div class="flex items-center gap-1 flex-wrap mt-1 pl-4">
-        {% for te in run_trace.all_tool_executions %}
+        {% for t in run_trace.unique_tools %}
         <span class="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0 rounded
-          {% if te.is_mcp %}bg-teal-950/70 text-teal-400{% else %}bg-blue-950/70 text-blue-400{% endif %}
-          {% if te.status == 'error' %}ring-1 ring-red-500/40{% endif %}">
-          {% if te.status == 'success' %}<span class="text-green-500">✓</span>
-          {% elif te.status == 'error' %}<span class="text-red-400">✗</span>
-          {% endif %}
-          <code>{{ te.display_name }}</code>
-          {% if te.duration_ms %}<span class="text-gray-600">{{ te.duration_ms }}ms</span>{% endif %}
+          {% if t.is_mcp %}bg-teal-950/70 text-teal-400{% else %}bg-blue-950/70 text-blue-400{% endif %}
+          {% if t.has_error %}ring-1 ring-red-500/40{% endif %}">
+          {% if t.has_error %}<span class="text-red-400">✗</span>{% endif %}
+          <code>{{ t.name }}</code>
+          {% if t.count > 1 %}<span class="text-gray-500">×{{ t.count }}</span>{% endif %}
         </span>
         {% endfor %}
       </div>
