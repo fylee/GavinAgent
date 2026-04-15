@@ -1129,6 +1129,30 @@ class SkillListApiView(View):
         return JsonResponse({"skills": skills})
 
 
+class MCPServerListApiView(View):
+    """GET /agent/api/mcp/ — return MCP server names as JSON for UI autocomplete."""
+
+    def get(self, request: HttpRequest) -> JsonResponse:
+        from agent.mcp.config import load_servers
+        from agent.mcp.pool import MCPConnectionPool
+
+        try:
+            pool = MCPConnectionPool.get()
+        except Exception:
+            pool = None
+
+        servers = []
+        for cfg in sorted(load_servers().values(), key=lambda c: c.name):
+            status = pool.get_status(cfg.name) if pool and cfg.enabled else "disconnected"
+            servers.append({
+                "name": cfg.name,
+                "description": cfg.description or cfg.type,
+                "status": status,
+                "enabled": cfg.enabled,
+            })
+        return JsonResponse({"servers": servers})
+
+
 class SkillSyncClaudeCodeView(View):
     """POST /agent/skills/sync-claude/ — sync workspace skills to ~/.claude/skills/."""
 

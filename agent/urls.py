@@ -48,6 +48,7 @@ urlpatterns = [
 
     # Skills API
     path("api/skills/", views.SkillListApiView.as_view(), name="api-skills"),
+    path("api/mcp/", views.MCPServerListApiView.as_view(), name="api-mcp"),
 
     # Agent CRUD
     path("agents/", views.AgentListView.as_view(), name="agent-list"),
