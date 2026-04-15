@@ -43,7 +43,7 @@ graph TD
     Workers -- broker --> redis
 ```
 
-**Agent loop (summary):** user message → Celery task → LangGraph state machine → LLM call → tool execution (web, file, shell, chart, …) → repeat until final answer → save reply → HTMX polling delivers it to browser.
+**Agent loop (summary):** user message → Celery task → LangGraph state machine → `assemble_context` (parses `/skill` and `@mcp` directives, builds system prompt + tools schema) → LLM call → tool execution (web, file, shell, chart, …) → repeat until final answer → save reply → HTMX polling delivers it to browser.
 
 See [`.doc/architecture.md`](.doc/architecture.md) for the full component breakdown and [`.doc/agent-loop.md`](.doc/agent-loop.md) for the detailed LangGraph flowchart.
 
@@ -146,9 +146,11 @@ Open **http://127.0.0.1:8000/chat/** in your browser.
 
 **Chat features:**
 - **Markdown rendering** — replies render headings, bold, code blocks, tables, and syntax highlighting (via highlight.js)
-- **Slash-command autocomplete** — type `/` in the input to see and select available skills
+- **Slash-command autocomplete** — type `/` in the input to see and select available skills; the selected skill is forced exclusively for that query
+- **`@mcp` autocomplete** — type `@` to see configured MCP servers with live connection status; selecting one restricts the query to that server's tools only
+- **`@mcp tools`** — type `@mcp-name tools` to list all tools on that server instantly, without calling the LLM
 - **Auto-generated titles** — conversation titles are automatically summarised from the first question by the LLM
-- **Streaming** — responses stream token-by-token; tool calls show in a collapsible reasoning trace
+- **Tool call visibility** — unique tool chips shown below the "Show trace" toggle; see exactly which tools ran (with call counts) without expanding the trace
 
 Without the agent toggle, the chat is a plain LLM conversation (no tool access, lower latency).
 
@@ -264,7 +266,11 @@ Add and manage MCP servers at **http://127.0.0.1:8000/agent/mcp/**. Two transpor
 - **SSE (remote HTTP)** — connect to a running MCP server via `http://host/sse`
 - **stdio** — launch a local MCP server subprocess
 
-Connection status is shown with a colour-coded dot (🟢 connected / 🔴 error / ⚫ disconnected). Errors show the real HTTP status (e.g., `404 Not Found`) rather than the raw asyncio exception.
+MCP server configuration is stored in `agent/workspace/mcp_servers.json` (no database table). Connection status is shown with a colour-coded dot (🟢 connected / 🔴 error / ⚫ disconnected). Errors show the real HTTP status (e.g., `404 Not Found`) rather than the raw asyncio exception.
+
+### Targeting a specific MCP server
+
+Type `@mcp-name` in the chat input to restrict a query to that server's tools only. Typing `@` shows a dropdown of all configured servers with live status. Type `@mcp-name tools` to list a server's tools without calling the LLM.
 
 ### GavinAgent as an MCP server
 

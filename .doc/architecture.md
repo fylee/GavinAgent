@@ -73,8 +73,10 @@ graph TD
 
 **Chat UI features**
 - Markdown rendering (marked.js + highlight.js for code blocks)
-- Slash-command autocomplete (`/` prefix shows available commands)
+- Slash-command autocomplete (`/` prefix shows available skills)
+- `@mcp-name` autocomplete — typing `@` shows a dropdown of configured MCP servers with live connection status (green/grey dot)
 - LLM-generated conversation titles — generated on the first exchange via a lightweight LLM call in `_generate_conversation_title()` then pushed via HTMX OOB swap to both the chat heading and the sidebar entry
+- **Tool call visibility** — unique tool chips (with call counts) always shown below the "Show trace" toggle; no click needed to see which tools ran
 
 **Flow**: User types → `MessageCreateView` saves message → fires signal → `agent.signals.on_message_created` creates `AgentRun` and queues Celery task → `MessageStreamView` polls until reply appears.
 
@@ -86,7 +88,6 @@ graph TD
 - `Agent` — name, system prompt, tools list, model, `is_default`
 - `AgentRun` — execution record: status, input/output, graph_state (JSON), triggered_skills
 - `ToolExecution` — audit log per tool call: status, input, output, duration_ms, parallel_group, approval
-- `MCPServer` — MCP server config (transport, command/url, encrypted env, auto_approve_tools)
 - `Memory` — long-term memory paragraphs with pgvector embeddings (1536-dim)
 - `LLMUsage` — token counts and estimated cost per LLM call
 - `Skill` — registry of installed skills with path, source, enabled flag, trust status
@@ -94,6 +95,8 @@ graph TD
 - `TrustedSkillSource` — allowlist of non-workspace skill source directories
 - `KnowledgeDocument` — RAG knowledge base entries with URL/file source and pgvector embeddings
 - `HeartbeatLog` — records each heartbeat trigger
+
+> **Note**: `MCPServer` Django model was removed (spec 029). MCP server configuration is now stored in `agent/workspace/mcp_servers.json` as a `MCPServerConfig` dataclass, managed by `agent/mcp/config.py`.
 
 **Execution**: `AgentRunner` → `build_graph()` → LangGraph `StateGraph.invoke()`. See [agent-loop.md](agent-loop.md) for the full flowchart.
 
@@ -126,30 +129,45 @@ flowchart TD
     G --> I([END])
 ```
 
-**State** carried between iterations: `pending_tool_calls`, `tool_results`, `assistant_tool_call_message`, `tool_call_rounds`, `visited_urls`, `output`.
+**State** carried between iterations: `pending_tool_calls`, `tool_results`, `assistant_tool_call_message`, `tool_call_rounds`, `visited_urls`, `output`, plus pre-built context fields set by `assemble_context`: `_system_content`, `_tools_schema`, `_model`, `_forced_mcp`, `_tool_listing`.
 
 ---
 
 ## System Prompt Assembly
 
-Built in `_build_system_context(query)` on every LLM call using a **parallel ThreadPoolExecutor** (4 workers) to fetch skills, memory, knowledge, and MCP resources concurrently:
+Built in `_build_system_context(query, forced_skill, suppress_skills)` once per run inside `assemble_context` using a **parallel ThreadPoolExecutor** (4 workers) to fetch skills, memory, knowledge, and MCP resources concurrently:
 
-| Order | Content | Source |
-|-------|---------|--------|
-| 1 | Current datetime + timezone | `datetime.now()` |
-| 2 | Universal rules | `workspace/AGENTS.md` |
-| 3 | Persona/tone | `workspace/SOUL.md` |
-| 4 | Skill catalog (compact index of all skills) | `build_skill_catalog()` |
-| 5 | Matched skill bodies | `workspace/skills/*/SKILL.md` + `rules/*.md` appended |
-| 6 | Relevant memories | pgvector top-5 similarity search |
-| 7 | MCP resources | `always_include` resource URIs |
-| 8 | MCP server connectivity status | `MCPConnectionPool` + `MCPRegistry` |
-| 9 | Reference knowledge | RAG retrieval from `KnowledgeDocument` |
-| 10 | Tool output formatting rule | Static instruction |
-| 11 | Parallel tool call instruction | Static instruction |
-| 12 | Reasoning transparency instruction | Static instruction |
+| Order | Content | Source | Suppressed when |
+|-------|---------|--------|----------------|
+| 1 | Current datetime + timezone | `datetime.now()` | — |
+| 2 | Universal rules | `workspace/AGENTS.md` | — |
+| 3 | Persona/tone | `workspace/SOUL.md` | — |
+| 4 | Skill catalog (compact index of all skills) | `build_skill_catalog()` | `@mcp`-only mode |
+| 5 | Matched skill bodies | `workspace/skills/*/SKILL.md` + `rules/*.md` appended | `@mcp`-only mode |
+| 6 | Relevant memories | pgvector top-5 similarity search | — |
+| 7 | MCP resources | `always_include` resource URIs | — |
+| 8 | MCP server connectivity status | `MCPConnectionPool` + `MCPRegistry` | — |
+| 9 | Reference knowledge | RAG retrieval from `KnowledgeDocument` | — |
+| 10 | Tool output formatting rule | Static instruction | — |
+| 11 | Parallel tool call instruction | Static instruction | — |
+| 12 | Reasoning transparency instruction | Static instruction | — |
 
 > **Parallel assembly**: steps 5 (skills), 6 (memory), 9 (knowledge), and 7 (MCP resources) are fetched concurrently via `ThreadPoolExecutor(max_workers=4)`. Total wall time ≈ slowest single lookup.
+
+---
+
+## Input Directives
+
+Two special prefixes in the chat input control context assembly and tool routing:
+
+| Directive | Example | Effect |
+|-----------|---------|--------|
+| `/skill-name` | `/edwm-wip-movement what is today's move?` | Only that skill injected; embedding routing bypassed |
+| `@mcp-name` | `@fab-mcp get lots on hold` | Only that server's tools in schema; **all skills suppressed** |
+| `@mcp-name tools` | `@fab-mcp tools` | Returns tool listing immediately, no LLM call |
+| `/skill @mcp` | `/edwm-wip-movement @fab-mcp query` | Named skill + named MCP only |
+
+Typing `@` in the chat input triggers an autocomplete dropdown listing all configured MCP servers with their live connection status.
 
 ---
 
@@ -300,7 +318,9 @@ MCP tools are discovered dynamically from connected MCP servers and registered a
 
 ## MCP Integration
 
-`MCPConnectionPool` is a singleton with a dedicated async event loop in a background thread. It manages connections to all enabled `MCPServer` instances.
+`MCPConnectionPool` is a singleton with a dedicated async event loop in a background thread. It manages connections to all enabled MCP servers.
+
+**Configuration** (spec 029): MCP server config is stored in `agent/workspace/mcp_servers.json` as `MCPServerConfig` dataclasses. The `MCPServer` Django model has been removed. Config is managed via `agent/mcp/config.py` (`load_servers`, `upsert_server`, `remove_server`) and the `/agent/mcp/` UI.
 
 **Transports**
 - `stdio` — local subprocess (e.g. `npx -y @modelcontextprotocol/server-brave-search`)
@@ -310,11 +330,12 @@ MCP tools are discovered dynamically from connected MCP servers and registered a
 - Tool discovery on connect (registered into `MCPRegistry`)
 - `always_include` resource URIs injected into every system prompt
 - Per-server `auto_approve_tools` list
-- Encrypted env vars (`EncryptedJSONField` using Fernet)
-- Connection status tracked in `MCPServer.connection_status`
+- Connection status tracked per-server in the pool
 - Auto-disable after 10 consecutive connection failures (spec 024)
 - Session expiry detection — reconnects on 401/403 or SSE session-expired events (spec 024)
 - `_unwrap_error()` helper unwraps Python 3.11+ `BaseExceptionGroup` to expose the root cause in logs and UI
+
+**`@mcp-name` directive**: When the user types `@mcp-name` in a query, only tools from that server are included in the LLM tools schema, and `mcp_servers_active` in the progress UI shows only that server. Type `@mcp-name tools` to list that server's tools without calling the LLM.
 
 **GavinAgent as MCP server**: `mcp_server.py` exposes GavinAgent's own tools over SSE (`/mcp/sse/`) so external clients (e.g. Claude Desktop, Claude Code) can use them.
 
@@ -386,6 +407,7 @@ sequenceDiagram
 /agent/skills/import-from-project/             Import skills from source directory
 /agent/skills/embed-all/                       Re-embed all skills
 /agent/api/skills/                             JSON skill list API
+/agent/api/mcp/                                JSON MCP server list + live status API
 /agent/memory/                                 Memory editor + search
 /agent/mcp/                                    MCP server config
 /agent/knowledge/                              RAG knowledge base management
@@ -502,16 +524,20 @@ chat/
   tasks.py               process_chat_message, _generate_conversation_title
 
 agent/
-  models.py              Agent, AgentRun, MCPServer, Memory, Skill, SkillEmbedding,
+  models.py              Agent, AgentRun, Memory, Skill, SkillEmbedding,
                          TrustedSkillSource, KnowledgeDocument, LLMUsage, ...
-  views.py               Dashboard, CRUD, approval, monitoring, skills UI
+                         (MCPServer removed in spec 029 — see mcp/config.py)
+  views.py               Dashboard, CRUD, approval, monitoring, skills UI,
+                         MCPServerListApiView (/agent/api/mcp/)
   runner.py              AgentRunner (sync executor + resumption)
   signals.py             on_message_created → trigger agent run
   tasks.py               Celery tasks
   graph/
     graph.py             LangGraph StateGraph + routing
     nodes.py             Node functions + _build_system_context (parallel assembly)
-    state.py             AgentState TypedDict
+                         + _parse_slash_skill, _parse_at_mcp, _is_mcp_tools_query,
+                           _format_mcp_tool_listing, _build_tools_schema
+    state.py             AgentState TypedDict (inc. _forced_mcp, _tool_listing, ...)
   tools/                 BaseTool implementations (auto-discovered)
   skills/
     discovery.py         collect_all_skills() — multi-source with trust model
@@ -519,16 +545,17 @@ agent/
     loader.py            SkillLoader — reads SKILL.md, parses frontmatter
     registry.py          SkillRegistry — in-memory skill index
   mcp/
-    client.py            SSE/stdio MCP client, _unwrap_error()
+    config.py            MCPServerConfig dataclass + load/save/upsert/remove
     pool.py              MCPConnectionPool singleton
-    registry.py          MCPRegistry — tool lookup
+    registry.py          MCPRegistry — tool lookup (server_name for @mcp filtering)
+    client.py            SSE/stdio MCP client, _unwrap_error()
   memory/
     long_term.py         search_long_term() via pgvector
     short_term.py        In-run working memory
   rag/
     retriever.py         retrieve_knowledge() — RAG search
     ingestor.py          Document ingestion + chunking
-  workspace/             AGENTS.md, SOUL.md, skills/, memory/
+  workspace/             AGENTS.md, SOUL.md, mcp_servers.json, skills/, memory/
   management/commands/
     sync_claude_code.py  Push skills to ~/.claude/skills/
     import_skills.py     Import skills from source directories
