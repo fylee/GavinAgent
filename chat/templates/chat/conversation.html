@@ -80,11 +80,11 @@
       </div>
 
       {# @MCP dropdown #}
-      <div x-show="atOpen && filteredServers.length > 0"
+      <div x-show="atOpen"
            x-cloak
            class="max-w-3xl mx-auto mb-2 rounded-xl border border-white/10 overflow-hidden shadow-xl"
            style="background-color: #2a2b2d;">
-        <ul>
+        <ul x-show="filteredServers.length > 0">
           <template x-for="(srv, i) in filteredServers" :key="srv.name">
             <li @mousedown.prevent="selectServer(srv)"
                 :class="i === atIndex ? 'bg-white/10' : 'hover:bg-white/5'"
@@ -99,6 +99,9 @@
             </li>
           </template>
         </ul>
+        <p x-show="filteredServers.length === 0" class="px-4 py-2.5 text-xs text-gray-500">
+          No MCP servers configured.
+        </p>
       </div>
 
       <form id="message-form"
@@ -292,11 +295,17 @@ function chatInput(cancelUrl, skillsUrl, mcpUrl) {
     },
 
     async _loadServers() {
+      if (this.servers.length > 0) return;
       try {
         const resp = await fetch(mcpUrl);
         const data = await resp.json();
         this.servers = data.servers || [];
       } catch (_) {}
+    },
+
+    async init() {
+      // Pre-load servers so they're ready when @ is first typed
+      await this._loadServers();
     },
 
     onTextInput(e) {
