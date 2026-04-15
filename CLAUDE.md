@@ -49,6 +49,14 @@ Always use these technologies. Do not introduce alternatives (e.g., Flask, React
 - Do not implement a major feature without a corresponding spec
 - Minor bug fixes and trivial changes do not require a spec
 
+### Test Reports (`.testreport/`)
+- After running tests for a spec, save the test report to `.testreport/<NNN>-<slug>.md`
+- The filename leading number **must match** the corresponding spec number exactly (e.g., spec `027-llm-call-resilience.md` → report `027-llm-call-resilience.md`)
+- Sub-specs use the same decimal notation: spec `021.1-skill-authoring-compliance.md` → report `021.1-skill-authoring-compliance.md`
+- Each report must include: run date/time, command used, total pass/fail counts, and a per-test result table
+- Reports are updated in-place on each subsequent test run (replace, do not append)
+- Do **not** store test reports inside `.spec/` files — keep spec (design) and report (execution) separate
+
 ### Docs (`.doc/`)
 - Place all project documentation here (architecture decisions, runbooks, API references, onboarding guides)
 - File names should be descriptive kebab-case: `database-schema.md`, `deployment.md`, etc.

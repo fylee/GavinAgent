@@ -79,8 +79,19 @@ cursor = connection.cursor()  # only with documented justification
 
 - Major features must have a spec in `.spec/` before implementation
 - Spec files follow sequential naming: `001-feature-name.md`, `002-feature-name.md`
+- Sub-specs use decimal notation: `021.1-feature-name.md`
 - Project documentation lives in `.doc/`
 - Do not suggest or generate code for a major feature if no spec exists — prompt to write one first
+
+## Test Reports (`.testreport/`)
+
+- After running tests for a spec, save the report to `.testreport/<NNN>-<slug>.md`
+- The filename leading number **must match** the spec number exactly:
+  - Spec `027-llm-call-resilience.md` → Report `.testreport/027-llm-call-resilience.md`
+  - Sub-spec `021.1-skill-authoring-compliance.md` → Report `.testreport/021.1-skill-authoring-compliance.md`
+- Each report must include: run date/time, command used, total pass/fail counts, and a per-test result table
+- Reports are replaced in-place on each subsequent run (not appended)
+- Never store test results inside a `.spec/` file — keep design and execution records separate
 
 ## Spec Template (`.spec/NNN-feature-name.md`)
 
