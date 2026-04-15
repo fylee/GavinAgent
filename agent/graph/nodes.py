@@ -72,12 +72,29 @@ def _append_rules(skill_dir: Path, body: str) -> str:
     return body + "\n\n---\n\n" + "\n\n---\n\n".join(parts)
 
 
-def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
+def _parse_slash_skill(query: str) -> str | None:
+    """Return the skill name from a leading slash directive (e.g. '/edwm-wip-movement query').
+
+    Returns None if the input does not start with a slash-prefixed word.
+    Skill name is the first whitespace-separated token after the leading '/'.
+    """
+    import re
+    m = re.match(r"^/([A-Za-z0-9_-]+)(?:\s|$)", query.lstrip())
+    return m.group(1) if m else None
+
+
+def _build_skills_section(
+    query: str,
+    forced_skill: str | None = None,
+) -> tuple[str, list[str], list[dict]]:
     """Discover skills across all trusted source directories, match against query
     using embeddings (with keyword fallback), inject body for matched skills.
 
     Spec 023: uses collect_all_skills() for multi-source discovery.
     rules/*.md content is appended to skill body at injection time.
+
+    If *forced_skill* is provided (from a leading /skill-name directive) only that
+    skill is injected — all embedding/keyword routing is bypassed.
 
     Returns (section_text, triggered_skill_names, skill_entries, skill_dir_map).
     skill_entries: list of {name, status, match} for context_trace.
@@ -91,8 +108,12 @@ def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
     query_lower = query.lower()
 
     # Embedding-based routing (primary): returns list[tuple[str, float]]
-    _embedding_results = find_relevant_skills(query)
-    embedding_matches: dict[str, float] = {name: score for name, score in _embedding_results}
+    # Skip when a specific skill is forced — avoids an unnecessary pgvector query.
+    if forced_skill:
+        embedding_matches: dict[str, float] = {}
+    else:
+        _embedding_results = find_relevant_skills(query)
+        embedding_matches = {name: score for name, score in _embedding_results}
 
     index_rows: list[str] = []
     body_sections: list[str] = []
@@ -144,9 +165,14 @@ def _build_skills_section(query: str) -> tuple[str, list[str], list[dict]]:
             or _parse_metadata_list(meta, "trigger_patterns")
         )
 
-        # Embedding match (primary)
+        # Forced-skill mode: only the explicitly named skill is triggered.
         match_reason: str | None = None
-        if name in embedding_matches:
+        if forced_skill:
+            matched = name == forced_skill
+            if matched:
+                match_reason = "slash"
+        # Embedding match (primary)
+        elif name in embedding_matches:
             matched = True
             match_reason = "embedding"
         elif not embedding_matches and not triggers and not trigger_patterns:
@@ -239,7 +265,10 @@ def _build_knowledge_section(query: str) -> tuple[str, list[dict]]:
     return "\n\n".join(parts), matched_docs
 
 
-def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]:
+def _build_system_context(
+    query: str,
+    forced_skill: str | None = None,
+) -> tuple[str, list[str], list[dict], dict]:
     """Assemble system prompt from workspace files, memories, and MCP resources.
 
     Returns (system_prompt, triggered_skill_names, rag_matches, context_trace).
@@ -272,7 +301,7 @@ def _build_system_context(query: str) -> tuple[str, list[str], list[dict], dict]
     mcp_resources: list[str] = []
 
     def _fetch_skills():
-        return _build_skills_section(query)
+        return _build_skills_section(query, forced_skill=forced_skill)
 
     def _fetch_memory():
         try:
@@ -845,8 +874,9 @@ def assemble_context(state: AgentState) -> dict:
     """Pre-build context that is stable across all rounds of this run."""
     query = state.get("input", "")
     model = _get_agent_model(state)
+    forced_skill = _parse_slash_skill(query)
     system_content, triggered_skills, rag_matches, context_trace, skill_dir_map = (
-        _build_system_context(query)
+        _build_system_context(query, forced_skill=forced_skill)
     )
     if state.get("conversation_id"):
         system_content += f"\n\n---\n\nCurrent conversation ID: `{state['conversation_id']}`"

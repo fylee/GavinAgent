@@ -303,3 +303,82 @@ class TestCallLlmResumptionFallback:
 
         mock_ctx.assert_called_once()
         assert result.get("output") == "Hello back"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _parse_slash_skill
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestParseSlashSkill:
+    def test_leading_slash_returns_skill_name(self):
+        from agent.graph.nodes import _parse_slash_skill
+        assert _parse_slash_skill("/edwm-wip-movement what is today's CT count?") == "edwm-wip-movement"
+
+    def test_slash_only_token_no_query(self):
+        from agent.graph.nodes import _parse_slash_skill
+        assert _parse_slash_skill("/my-skill") == "my-skill"
+
+    def test_no_slash_returns_none(self):
+        from agent.graph.nodes import _parse_slash_skill
+        assert _parse_slash_skill("what is today's CT count?") is None
+
+    def test_slash_in_middle_returns_none(self):
+        from agent.graph.nodes import _parse_slash_skill
+        assert _parse_slash_skill("query /edwm-wip-movement") is None
+
+    def test_empty_input_returns_none(self):
+        from agent.graph.nodes import _parse_slash_skill
+        assert _parse_slash_skill("") is None
+
+    def test_slash_with_underscore_skill(self):
+        from agent.graph.nodes import _parse_slash_skill
+        assert _parse_slash_skill("/my_skill do something") == "my_skill"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# assemble_context — slash-skill forced routing
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestAssembleContextSlashSkill:
+    def test_slash_skill_passed_to_build_system_context(self):
+        """Input starting with /skill-name passes forced_skill to _build_system_context."""
+        from agent.graph.nodes import assemble_context
+
+        state = {
+            "run_id": "run-1",
+            "agent_id": "agent-1",
+            "input": "/edwm-wip-movement what is today's move?",
+            "conversation_id": None,
+        }
+        with patch("agent.graph.nodes._build_system_context") as mock_ctx, \
+             patch("agent.graph.nodes._build_tools_schema", return_value=[]), \
+             patch("agent.graph.nodes._get_agent_model", return_value="test-model"):
+            mock_ctx.return_value = ("SYS", ["edwm-wip-movement"], [], {}, {})
+            assemble_context(state)
+
+        mock_ctx.assert_called_once_with(
+            "/edwm-wip-movement what is today's move?",
+            forced_skill="edwm-wip-movement",
+        )
+
+    def test_no_slash_passes_none(self):
+        """Input without leading slash passes forced_skill=None."""
+        from agent.graph.nodes import assemble_context
+
+        state = {
+            "run_id": "run-1",
+            "agent_id": "agent-1",
+            "input": "what is today's move?",
+            "conversation_id": None,
+        }
+        with patch("agent.graph.nodes._build_system_context") as mock_ctx, \
+             patch("agent.graph.nodes._build_tools_schema", return_value=[]), \
+             patch("agent.graph.nodes._get_agent_model", return_value="test-model"):
+            mock_ctx.return_value = ("SYS", [], [], {}, {})
+            assemble_context(state)
+
+        mock_ctx.assert_called_once_with(
+            "what is today's move?",
+            forced_skill=None,
+        )
+
