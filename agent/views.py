@@ -145,7 +145,7 @@ from django import forms
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db.models import Count, Sum
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
@@ -1661,23 +1661,86 @@ class WorkspaceFileServeView(View):
 # ── MCP Server Management ─────────────────────────────────────────────────────
 
 
+def _validate_mcp_post(post_data: dict) -> str | None:
+    """Validate MCP server form data. Returns an error message or None."""
+    name = post_data.get("name", "").strip()
+    transport = post_data.get("transport", "stdio")
+    command = post_data.get("command", "").strip()
+    url = post_data.get("url", "").strip()
+
+    if not name:
+        return "Name is required."
+    if " " in name or not name.replace("-", "").replace("_", "").isalnum():
+        return "Name must be slug-like (letters, numbers, hyphens, underscores only)."
+    if transport == "stdio" and not command:
+        return "Command is required for stdio transport."
+    if transport == "sse" and not url:
+        return "URL is required for SSE transport."
+    return None
+
+
+def _build_mcp_config_from_post(post_data: dict, name: str | None = None, existing_enabled: bool = True):
+    """Build an MCPServerConfig from POST data. Raises ValueError on invalid env_json."""
+    from agent.mcp.config import MCPServerConfig
+
+    cfg_name = name or post_data.get("name", "").strip()
+    transport = post_data.get("transport", "stdio")
+    command = post_data.get("command", "").strip()
+    url = post_data.get("url", "").strip()
+    enabled = post_data.get("enabled") == "on"
+
+    env_raw = post_data.get("env_json", "").strip()
+    try:
+        credentials = json.loads(env_raw) if env_raw else {}
+    except json.JSONDecodeError:
+        raise ValueError("Environment variables must be valid JSON.")
+
+    auto_approve_raw = post_data.get("auto_approve_tools", "").strip()
+    auto_approve_tools = [t.strip() for t in auto_approve_raw.split(",") if t.strip()] if auto_approve_raw else []
+
+    always_include_raw = post_data.get("always_include_resources", "").strip()
+    always_include_resources = [r.strip() for r in always_include_raw.split(",") if r.strip()] if always_include_raw else []
+
+    dead_codes_raw = post_data.get("session_dead_error_codes", "").strip()
+    session_dead_error_codes = [int(c.strip()) for c in dead_codes_raw.split(",") if c.strip().lstrip("-").isdigit()] if dead_codes_raw else []
+
+    health_probe_tool = post_data.get("health_probe_tool", "").strip()
+
+    # Route credentials to the correct field based on transport
+    env = credentials if transport == "stdio" else {}
+    headers = credentials if transport == "sse" else {}
+
+    return MCPServerConfig(
+        name=cfg_name,
+        type=transport,
+        command=command,
+        url=url,
+        env=env,
+        headers=headers,
+        auto_approve_tools=auto_approve_tools,
+        always_include_resources=always_include_resources,
+        session_dead_error_codes=session_dead_error_codes,
+        health_probe_tool=health_probe_tool,
+        enabled=enabled,
+    )
+
+
 class MCPServerListView(View):
     template_name = "agent/mcp.html"
 
     def get(self, request: HttpRequest) -> HttpResponse:
-        from agent.models import MCPServer
+        from agent.mcp.config import load_servers
         from agent.mcp.pool import MCPConnectionPool
-        servers = MCPServer.objects.all()
-        pool = MCPConnectionPool.get()
-        servers_with_tools = []
         from agent.mcp.registry import get_registry
+
+        servers = load_servers()
+        pool = MCPConnectionPool.get()
         registry = get_registry()
-        for server in servers:
-            tools = [e for e in registry.all().values() if e.server_name == server.name]
-            # Annotate with live pool status (overrides stale DB connection_status)
-            live_status = pool.get_status(server.name) if server.enabled else "disconnected"
-            server.live_status = live_status
-            servers_with_tools.append({"server": server, "tools": tools})
+        servers_with_tools = []
+        for cfg in servers.values():
+            tools = [e for e in registry.all().values() if e.server_name == cfg.name]
+            cfg.live_status = pool.get_status(cfg.name) if cfg.enabled else "disconnected"
+            servers_with_tools.append({"server": cfg, "tools": tools})
         all_disabled = bool(servers) and all(not item["server"].enabled for item in servers_with_tools)
         return render(request, self.template_name, {
             "servers_with_tools": servers_with_tools,
@@ -1691,67 +1754,33 @@ class MCPServerAddView(View):
         return HttpResponse(html)
 
     def post(self, request: HttpRequest) -> HttpResponse:
-        from agent.models import MCPServer
-        from django.core.exceptions import ValidationError
+        from agent.mcp.config import load_servers, upsert_server
         from agent.mcp.pool import MCPConnectionPool
 
+        err = _validate_mcp_post(request.POST)
+        if err:
+            if request.htmx:
+                return HttpResponse(f'<p class="text-red-400 text-sm">{err}</p>')
+            return HttpResponse(err, status=400)
+
+        # Reject duplicate names
         name = request.POST.get("name", "").strip()
-        transport = request.POST.get("transport", "stdio")
-        command = request.POST.get("command", "").strip()
-        url = request.POST.get("url", "").strip()
-
-        # Parse env as JSON (field name: env_json)
-        env_raw = request.POST.get("env_json", "").strip()
-        try:
-            env = json.loads(env_raw) if env_raw else {}
-        except json.JSONDecodeError:
+        if name in load_servers():
+            msg = f"A server named '{name}' already exists."
             if request.htmx:
-                return HttpResponse('<p class="text-red-400 text-sm">Environment variables must be valid JSON.</p>', status=400)
-            return HttpResponse("env must be valid JSON.", status=400)
-
-        auto_approve_raw = request.POST.get("auto_approve_tools", "").strip()
-        auto_approve_tools = [t.strip() for t in auto_approve_raw.split(",") if t.strip()] if auto_approve_raw else []
-
-        always_include_raw = request.POST.get("always_include_resources", "").strip()
-        always_include_resources = [r.strip() for r in always_include_raw.split(",") if r.strip()] if always_include_raw else []
-
-        dead_codes_raw = request.POST.get("session_dead_error_codes", "").strip()
-        session_dead_error_codes = [int(c.strip()) for c in dead_codes_raw.split(",") if c.strip().lstrip("-").isdigit()] if dead_codes_raw else []
-        health_probe_tool = request.POST.get("health_probe_tool", "").strip()
-
-        enabled = request.POST.get("enabled") == "on"
-
-        server = MCPServer(
-            name=name,
-            transport=transport,
-            command=command,
-            url=url,
-            env=env,
-            auto_approve_tools=auto_approve_tools,
-            always_include_resources=always_include_resources,
-            session_dead_error_codes=session_dead_error_codes,
-            health_probe_tool=health_probe_tool,
-            enabled=enabled,
-        )
-        try:
-            server.full_clean()
-        except ValidationError as e:
-            logger.warning("MCPServer validation error | POST=%s | error=%s", dict(request.POST), e)
-            try:
-                msg = " | ".join(
-                    f"{k}: {', '.join(str(v) for v in vs)}"
-                    for k, vs in e.message_dict.items()
-                )
-            except AttributeError:
-                msg = str(e)
-            if request.htmx:
-                # Return 200 so HTMX swaps the error into the DOM (4xx blocks swapping by default)
                 return HttpResponse(f'<p class="text-red-400 text-sm">{msg}</p>')
             return HttpResponse(msg, status=400)
 
-        server.save()
-        if enabled:
-            MCPConnectionPool.get().start_server(server)
+        try:
+            cfg = _build_mcp_config_from_post(request.POST)
+        except ValueError as e:
+            if request.htmx:
+                return HttpResponse(f'<p class="text-red-400 text-sm">{e}</p>')
+            return HttpResponse(str(e), status=400)
+
+        upsert_server(cfg)
+        if cfg.enabled:
+            MCPConnectionPool.get().start_server(cfg)
 
         if request.htmx:
             return HttpResponse(headers={"HX-Redirect": "/agent/mcp/"})
@@ -1759,69 +1788,39 @@ class MCPServerAddView(View):
 
 
 class MCPServerDetailView(View):
-    def get(self, request: HttpRequest, pk: str) -> HttpResponse:
-        from agent.models import MCPServer
-        server = get_object_or_404(MCPServer, pk=pk)
-        html = render_to_string("agent/_mcp_add_form.html", {"server": server}, request=request)
+    def get(self, request: HttpRequest, name: str) -> HttpResponse:
+        from agent.mcp.config import get_server
+        cfg = get_server(name)
+        if cfg is None:
+            raise Http404
+        html = render_to_string("agent/_mcp_add_form.html", {"server": cfg}, request=request)
         return HttpResponse(html)
 
-    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
-        from agent.models import MCPServer
-        from django.core.exceptions import ValidationError
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        from agent.mcp.config import get_server, upsert_server
         from agent.mcp.pool import MCPConnectionPool
-        server = get_object_or_404(MCPServer, pk=pk)
 
-        # Name is read-only after creation — keep the stored value unchanged.
-        # (Changing the name would break all tool namespace references.)
-        server.transport = request.POST.get("transport", server.transport)
-        server.command = request.POST.get("command", "").strip()
-        server.url = request.POST.get("url", "").strip()
+        cfg = get_server(name)
+        if cfg is None:
+            raise Http404
 
-        env_raw = request.POST.get("env_json", "").strip()
-        try:
-            server.env = json.loads(env_raw) if env_raw else {}
-        except json.JSONDecodeError:
-            if request.htmx:
-                return HttpResponse('<p class="text-red-400 text-sm">Environment variables must be valid JSON.</p>', status=400)
-            return HttpResponse("env must be valid JSON.", status=400)
-
-        auto_approve_raw = request.POST.get("auto_approve_tools", "").strip()
-        server.auto_approve_tools = [t.strip() for t in auto_approve_raw.split(",") if t.strip()] if auto_approve_raw else []
-
-        always_include_raw = request.POST.get("always_include_resources", "").strip()
-        server.always_include_resources = [r.strip() for r in always_include_raw.split(",") if r.strip()] if always_include_raw else []
-
-        dead_codes_raw = request.POST.get("session_dead_error_codes", "").strip()
-        server.session_dead_error_codes = [int(c.strip()) for c in dead_codes_raw.split(",") if c.strip().lstrip("-").isdigit()] if dead_codes_raw else []
-        server.health_probe_tool = request.POST.get("health_probe_tool", "").strip()
-
-        was_enabled = server.enabled
-        server.enabled = request.POST.get("enabled") == "on"
+        was_enabled = cfg.enabled
 
         try:
-            server.full_clean()
-        except ValidationError as e:
-            logger.warning("MCPServer validation error | POST=%s | error=%s", dict(request.POST), e)
-            try:
-                msg = " | ".join(
-                    f"{k}: {', '.join(str(v) for v in vs)}"
-                    for k, vs in e.message_dict.items()
-                )
-            except AttributeError:
-                msg = str(e)
+            updated = _build_mcp_config_from_post(request.POST, name=name)
+        except ValueError as e:
             if request.htmx:
-                # Return 200 so HTMX swaps the error into the DOM (4xx blocks swapping by default)
-                return HttpResponse(f'<p class="text-red-400 text-sm">{msg}</p>')
-            return HttpResponse(msg, status=400)
+                return HttpResponse(f'<p class="text-red-400 text-sm">{e}</p>')
+            return HttpResponse(str(e), status=400)
 
-        server.save()
+        upsert_server(updated)
         pool = MCPConnectionPool.get()
-        if server.enabled and not was_enabled:
-            pool.start_server(server)
-        elif not server.enabled and was_enabled:
-            pool.stop_server(server.name)
-        elif server.enabled:
-            pool.refresh_server(server.name)
+        if updated.enabled and not was_enabled:
+            pool.start_server(updated)
+        elif not updated.enabled and was_enabled:
+            pool.stop_server(name)
+        elif updated.enabled:
+            pool.refresh_server(name)
 
         if request.htmx:
             return HttpResponse(headers={"HX-Redirect": "/agent/mcp/"})
@@ -1829,58 +1828,63 @@ class MCPServerDetailView(View):
 
 
 class MCPServerToggleView(View):
-    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
-        from agent.models import MCPServer
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        from agent.mcp.config import get_server, upsert_server
         from agent.mcp.pool import MCPConnectionPool
-        server = get_object_or_404(MCPServer, pk=pk)
-        pool = MCPConnectionPool.get()
-
-        if server.enabled:
-            server.enabled = False
-            server.connection_status = MCPServer.ConnectionStatus.DISCONNECTED
-            server.save(update_fields=["enabled", "connection_status"])
-            pool.stop_server(server.name)
-        else:
-            server.enabled = True
-            server.save(update_fields=["enabled"])
-            pool.start_server(server)
-
         from agent.mcp.registry import get_registry
-        tools = [e for e in get_registry().all().values() if e.server_name == server.name]
-        server.refresh_from_db()
-        server.live_status = pool.get_status(server.name) if server.enabled else "disconnected"
+
+        cfg = get_server(name)
+        if cfg is None:
+            raise Http404
+
+        pool = MCPConnectionPool.get()
+        cfg.enabled = not cfg.enabled
+        upsert_server(cfg)
+
+        if cfg.enabled:
+            pool.start_server(cfg)
+        else:
+            pool.stop_server(name)
+
+        tools = [e for e in get_registry().all().values() if e.server_name == name]
+        cfg.live_status = pool.get_status(name) if cfg.enabled else "disconnected"
         html = render_to_string(
             "agent/_mcp_server.html",
-            {"server": server, "tools": tools},
+            {"server": cfg, "tools": tools},
             request=request,
         )
         return HttpResponse(html)
 
 
 class MCPServerRefreshView(View):
-    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
-        from agent.models import MCPServer
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        from agent.mcp.config import get_server
         from agent.mcp.pool import MCPConnectionPool
         from agent.mcp.registry import get_registry
-        server = get_object_or_404(MCPServer, pk=pk)
-        MCPConnectionPool.get().refresh_server(server.name)
-        server.refresh_from_db()
-        tools = [e for e in get_registry().all().values() if e.server_name == server.name]
+
+        cfg = get_server(name)
+        if cfg is None:
+            raise Http404
+
+        pool = MCPConnectionPool.get()
+        pool.refresh_server(name)
+        tools = [e for e in get_registry().all().values() if e.server_name == name]
+        cfg.live_status = pool.get_status(name) if cfg.enabled else "disconnected"
         html = render_to_string(
             "agent/_mcp_server.html",
-            {"server": server, "tools": tools},
+            {"server": cfg, "tools": tools},
             request=request,
         )
         return HttpResponse(html)
 
 
 class MCPServerDeleteView(View):
-    def post(self, request: HttpRequest, pk: str) -> HttpResponse:
-        from agent.models import MCPServer
+    def post(self, request: HttpRequest, name: str) -> HttpResponse:
+        from agent.mcp.config import remove_server
         from agent.mcp.pool import MCPConnectionPool
-        server = get_object_or_404(MCPServer, pk=pk)
-        MCPConnectionPool.get().stop_server(server.name)
-        server.delete()
+
+        MCPConnectionPool.get().stop_server(name)
+        remove_server(name)
         if request.htmx:
             return HttpResponse(headers={"HX-Redirect": "/agent/mcp/"})
         return redirect("agent:mcp-list")

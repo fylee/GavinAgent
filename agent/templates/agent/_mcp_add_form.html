@@ -10,7 +10,7 @@
   </div>
 
   <form
-    hx-post="{% if server %}{% url 'agent:mcp-detail' pk=server.id %}{% else %}{% url 'agent:mcp-add' %}{% endif %}"
+    hx-post="{% if server %}{% url 'agent:mcp-detail' name=server.name %}{% else %}{% url 'agent:mcp-add' %}{% endif %}"
     hx-target="#mcp-form-error"
     hx-swap="innerHTML"
     class="space-y-4">

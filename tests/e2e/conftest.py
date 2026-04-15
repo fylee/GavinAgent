@@ -14,7 +14,6 @@ from tests.factories import (
     HeartbeatLogFactory,
     KnowledgeDocumentFactory,
     LLMUsageFactory,
-    MCPServerFactory,
     MessageFactory,
     SkillFactory,
     ToolExecutionFactory,

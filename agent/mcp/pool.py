@@ -82,45 +82,49 @@ class MCPConnectionPool:
             time.sleep(10 if first_run else 60)
             first_run = False
             try:
-                from agent.models import MCPServer
-                servers = list(MCPServer.objects.filter(enabled=True))
+                from agent.mcp.config import load_servers
+                servers = {
+                    name: cfg
+                    for name, cfg in load_servers().items()
+                    if cfg.enabled
+                }
                 reg = get_registry()
                 tool_count = len(reg.all())
                 logger.info("MCP registry health: %d tools registered", tool_count)
-                for server in servers:
+                for name, cfg in servers.items():
                     # Spec 024: use active health probe when configured;
                     # fall back to simple session-present check for unconfigured servers.
                     try:
                         is_healthy = asyncio.run_coroutine_threadsafe(
-                            self._check_session_health(server), self._loop
+                            self._check_session_health(cfg), self._loop
                         ).result(timeout=10)
                     except Exception:
-                        is_healthy = self.get_status(server.name) == "connected"
+                        is_healthy = self.get_status(name) == "connected"
 
                     if not is_healthy:
-                        logger.info("MCP retry: reconnecting %s (session dead or disconnected)", server.name)
-                        self.start_server(server)
+                        logger.info("MCP retry: reconnecting %s (session dead or disconnected)", name)
+                        self.start_server(cfg)
                     else:
                         # Server connected but registry empty → re-discover tools
                         server_tools = [
                             t for t in reg.all().values()
-                            if t.server_name == server.name
+                            if t.server_name == name
                         ]
                         if not server_tools:
                             logger.warning(
                                 "MCP server %s connected but no tools in registry — re-discovering",
-                                server.name,
+                                name,
                             )
-                            conn = self._connections.get(server.name)
+                            conn = self._connections.get(name)
                             if conn and conn.session:
                                 future = asyncio.run_coroutine_threadsafe(
-                                    self._discover_tools(server.name, conn.session),
+                                    self._discover_tools(name, conn.session),
                                     self._loop,
                                 )
                                 try:
                                     future.result(timeout=15)
                                 except Exception as exc:
-                                    logger.error("MCP re-discover %s error: %s", server.name, exc)
+                                    logger.error("MCP re-discover %s error: %s", name, exc)
             except Exception as exc:
                 logger.debug("MCP retry loop error: %s", exc)
 
@@ -132,7 +136,7 @@ class MCPConnectionPool:
             pass
 
     def start_server(self, server) -> None:
-        """Connect a single MCPServer model instance."""
+        """Connect a single MCPServerConfig instance."""
         future = asyncio.run_coroutine_threadsafe(
             self._start_server_async(server), self._loop
         )
@@ -195,14 +199,13 @@ class MCPConnectionPool:
         """
         results = []
         try:
-            from agent.models import MCPServer
-            servers = MCPServer.objects.filter(enabled=True).exclude(
-                always_include_resources=[]
-            )
-            for server in servers:
-                for uri in server.always_include_resources:
+            from agent.mcp.config import load_servers
+            for cfg in load_servers().values():
+                if not cfg.enabled or not cfg.always_include_resources:
+                    continue
+                for uri in cfg.always_include_resources:
                     try:
-                        content = self.read_resource(server.name, uri)
+                        content = self.read_resource(cfg.name, uri)
                         if content:
                             results.append(f"### Resource: {uri}\n\n{content}")
                     except Exception as exc:
@@ -215,17 +218,20 @@ class MCPConnectionPool:
 
     async def _start_all_async(self) -> None:
         try:
-            from agent.models import MCPServer
-            from asgiref.sync import sync_to_async
-            servers = await sync_to_async(lambda: list(MCPServer.objects.filter(enabled=True)))()
-            tasks = [self._start_server_async(server) for server in servers]
+            from agent.mcp.config import load_servers
+            servers = load_servers()
+            tasks = [
+                self._start_server_async(cfg)
+                for cfg in servers.values()
+                if cfg.enabled
+            ]
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as exc:
             logger.error("MCP _start_all_async error: %s", exc, exc_info=True)
 
-    async def _start_server_async(self, server) -> None:
-        name = server.name
+    async def _start_server_async(self, cfg) -> None:
+        name = cfg.name
         if name in self._connections:
             return  # already running
 
@@ -237,25 +243,24 @@ class MCPConnectionPool:
 
         async def on_ready(srv_name: str, session: Any) -> None:
             await self._discover_tools(srv_name, session)
-            await self._update_db_status(srv_name, "connected")
             ready_event.set()
 
         async def on_error(srv_name: str, error: str) -> None:
             logger.error("MCP server '%s' connection error: %s", srv_name, error)
-            await self._update_db_status(srv_name, "error", error)
             self._connections.pop(srv_name, None)
             self._tasks.pop(srv_name, None)
             get_registry().unregister_server(srv_name)
             error_event.set()
 
-        if server.transport == "stdio":
+        if cfg.type == "stdio":
             coro = run_stdio_connection(
-                name, server.command, dict(server.env or {}), conn, on_ready, on_error
+                name, cfg.command, cfg.resolved_env(),
+                conn, on_ready, on_error, args=cfg.args or None,
             )
         else:
-            headers = {k: v for k, v in (server.env or {}).items()}
             coro = run_sse_connection(
-                name, server.url, headers, conn, on_ready, on_error
+                name, cfg.url, cfg.resolved_headers(),
+                conn, on_ready, on_error,
             )
 
         task = self._loop.create_task(coro)
@@ -288,7 +293,6 @@ class MCPConnectionPool:
             except Exception:
                 pass
         get_registry().unregister_server(server_name)
-        await self._update_db_status(server_name, "disconnected")
 
     async def _stop_all_async(self) -> None:
         names = list(self._connections.keys())
@@ -300,12 +304,12 @@ class MCPConnectionPool:
         logger.info("MCP %s: session dead — reconnecting", server_name)
         await self._stop_server_async(server_name)
         try:
-            from asgiref.sync import sync_to_async
-            from agent.models import MCPServer
-            server = await sync_to_async(
-                lambda: MCPServer.objects.get(name=server_name)
-            )()
-            await self._start_server_async(server)
+            from agent.mcp.config import get_server
+            cfg = get_server(server_name)
+            if cfg is None:
+                logger.error("MCP %s: reconnect failed — server not found in config", server_name)
+                return
+            await self._start_server_async(cfg)
         except Exception as exc:
             logger.error("MCP %s: reconnect failed: %s", server_name, exc)
             raise
@@ -319,39 +323,27 @@ class MCPConnectionPool:
         """
         Spec 024 — Pattern B: detect server-side session expiry that manifests
         as a JSON-RPC error code rather than a transport-level disconnect.
-
-        Steps:
-        1. Check if the error code is in MCPServer.session_dead_error_codes.
-        2. If a health_probe_tool is configured, call it with no args.
-           - Probe also fails with matching code  →  session dead  →  True
-           - Probe succeeds                        →  real param error  →  False
-        3. If no probe tool is configured, treat matching code as session dead.
         """
-        import re
-        from asgiref.sync import sync_to_async
-        from agent.models import MCPServer
+        import re as _re
+        from agent.mcp.config import get_server
 
-        try:
-            server = await sync_to_async(
-                lambda: MCPServer.objects.get(name=server_name)
-            )()
-        except Exception:
+        cfg = get_server(server_name)
+        if cfg is None:
             return False
 
-        dead_codes: list = server.session_dead_error_codes or []
+        dead_codes: list = cfg.session_dead_error_codes or []
         if not dead_codes:
             return False
 
-        # Word-boundary match to avoid e.g. code 602 matching -32602
         exc_str = str(exc)
         matched = any(
-            re.search(rf"(?<!\d){re.escape(str(code))}(?!\d)", exc_str)
+            _re.search(rf"(?<!\d){_re.escape(str(code))}(?!\d)", exc_str)
             for code in dead_codes
         )
         if not matched:
             return False
 
-        probe_tool = (server.health_probe_tool or "").strip()
+        probe_tool = (cfg.health_probe_tool or "").strip()
         if not probe_tool:
             logger.warning(
                 "MCP %s: error matches session_dead_error_codes but no probe tool configured "
@@ -360,10 +352,8 @@ class MCPConnectionPool:
             )
             return True
 
-        # Probe with a known no-param tool call
         try:
             await conn.session.call_tool(probe_tool, {})
-            # Probe succeeded → the original error was a real parameter problem
             logger.debug(
                 "MCP %s: probe '%s' succeeded — original error is a real param error",
                 server_name, probe_tool,
@@ -372,7 +362,7 @@ class MCPConnectionPool:
         except Exception as probe_exc:
             probe_str = str(probe_exc)
             if any(
-                re.search(rf"(?<!\d){re.escape(str(code))}(?!\d)", probe_str)
+                _re.search(rf"(?<!\d){_re.escape(str(code))}(?!\d)", probe_str)
                 for code in dead_codes
             ):
                 logger.warning(
@@ -380,55 +370,50 @@ class MCPConnectionPool:
                     server_name, probe_tool,
                 )
                 return True
-            # Probe failed for unrelated reason (e.g. tool not found) — inconclusive
             logger.warning(
                 "MCP %s: probe '%s' failed with unexpected error '%s' — not reconnecting",
                 server_name, probe_tool, probe_exc,
             )
             return False
 
-    async def _check_session_health(self, server) -> bool:
+    async def _check_session_health(self, cfg) -> bool:
         """
         Spec 024: return True if the session is alive.
 
-        If health_probe_tool is configured, actively calls it to detect zombie
-        sessions (Pattern B: SSE stream open but server-side state gone).
-        Falls back to checking conn.session is not None for unconfigured servers.
+        Accepts MCPServerConfig. If health_probe_tool is configured, actively
+        calls it to detect zombie sessions.
         """
-        import re
-        conn = self._connections.get(server.name)
+        import re as _re
+        conn = self._connections.get(cfg.name)
         if conn is None or conn.session is None:
             return False
 
-        probe_tool = (server.health_probe_tool or "").strip()
+        probe_tool = (cfg.health_probe_tool or "").strip()
         if not probe_tool:
-            return True  # no probe configured — assume alive (existing behaviour)
+            return True
 
-        dead_codes: list = server.session_dead_error_codes or []
+        dead_codes: list = cfg.session_dead_error_codes or []
         try:
             await conn.session.call_tool(probe_tool, {})
             return True
         except Exception as exc:
-            # Pattern A: transport-level error on probe → session definitely dead
             if _is_session_dead_error(exc):
                 logger.warning(
                     "MCP %s: health probe raised transport error — session dead",
-                    server.name,
+                    cfg.name,
                 )
                 return False
-            # Pattern B: JSON-RPC dead-session code on probe
             if dead_codes:
                 exc_str = str(exc)
                 if any(
-                    re.search(rf"(?<!\d){re.escape(str(code))}(?!\d)", exc_str)
+                    _re.search(rf"(?<!\d){_re.escape(str(code))}(?!\d)", exc_str)
                     for code in dead_codes
                 ):
                     logger.warning(
                         "MCP %s: health probe failed with session-dead code — session dead",
-                        server.name,
+                        cfg.name,
                     )
                     return False
-            # Probe failed for unrelated reason — don't treat as dead
             return True
 
     async def _call_tool_async(self, server_name: str, tool_name: str, args: dict) -> dict:
@@ -439,20 +424,17 @@ class MCPConnectionPool:
             result = await conn.session.call_tool(tool_name, args)
             return {"content": extract_tool_content(result)}
         except Exception as exc:
-            # Pattern A: transport-level dead session (existing)
             if _is_session_dead_error(exc):
                 logger.warning("MCP %s: %s — reconnecting and retrying", server_name, type(exc).__name__)
-            # Pattern B: JSON-RPC dead session (Spec 024)
             elif await self._is_jsonrpc_session_dead(server_name, exc, conn):
                 logger.warning("MCP %s: JSON-RPC session dead — reconnecting and retrying", server_name)
             else:
-                raise  # real error, don't reconnect
+                raise
 
             await self._reconnect_server_async(server_name)
             conn = self._connections.get(server_name)
             if conn is None or conn.session is None:
                 raise MCPTimeoutError(f"MCP {server_name}: reconnect succeeded but session unavailable")
-            # Retry exactly once — no dead-session detection on retry to prevent loops
             result = await conn.session.call_tool(tool_name, args)
             return {"content": extract_tool_content(result)}
 
@@ -464,10 +446,8 @@ class MCPConnectionPool:
             result = await conn.session.read_resource(uri)
             return extract_resource_content(result)
         except Exception as exc:
-            # Pattern A
             if _is_session_dead_error(exc):
                 logger.warning("MCP %s: %s on read_resource — reconnecting and retrying", server_name, type(exc).__name__)
-            # Pattern B (Spec 024)
             elif await self._is_jsonrpc_session_dead(server_name, exc, conn):
                 logger.warning("MCP %s: JSON-RPC session dead on read_resource — reconnecting and retrying", server_name)
             else:
@@ -510,24 +490,3 @@ class MCPConnectionPool:
             )
         except Exception as exc:
             logger.error("MCP tool discovery failed for %s: %s", server_name, exc, exc_info=True)
-
-    async def _update_db_status(
-        self, server_name: str, status: str, error: str = ""
-    ) -> None:
-        try:
-            from asgiref.sync import sync_to_async
-            await sync_to_async(self._update_db_status_sync)(server_name, status, error)
-        except Exception as exc:
-            logger.warning("Could not update MCPServer status: %s", exc)
-
-    @staticmethod
-    def _update_db_status_sync(server_name: str, status: str, error: str = "") -> None:
-        from django.utils import timezone
-        from agent.models import MCPServer
-
-        update: dict = {"connection_status": status, "last_error": error}
-        if status == "connected":
-            update["last_connected_at"] = timezone.now()
-        MCPServer.objects.filter(name=server_name).update(**update)
-        if status == "error":
-            MCPServer.objects.filter(name=server_name).update(enabled=False)

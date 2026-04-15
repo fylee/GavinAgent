@@ -58,34 +58,40 @@ class Command(BaseCommand):
     # ── MCP servers ────────────────────────────────────────────────────────
 
     def _sync_mcp(self, claude_dir: Path, dry_run: bool) -> None:
-        from agent.models import MCPServer
+        from agent.mcp.config import load_servers
 
-        servers = MCPServer.objects.filter(enabled=True)
-        if not servers.exists():
+        servers = {
+            name: cfg
+            for name, cfg in load_servers().items()
+            if cfg.enabled
+        }
+        if not servers:
             self.stdout.write("  MCP: no active servers found — skipping")
             return
 
         mcp_entries: dict = {}
-        for srv in servers:
+        for name, cfg in servers.items():
             entry: dict = {}
-            if srv.transport == MCPServer.Transport.SSE:
+            if cfg.type == "sse":
                 entry["type"] = "sse"
-                entry["url"] = srv.url
-                # env is used as HTTP headers for SSE
-                if srv.env:
-                    entry["headers"] = dict(srv.env)
+                entry["url"] = cfg.url
+                if cfg.headers:
+                    entry["headers"] = cfg.headers
             else:  # stdio
-                # command may be "uvx mcp-server-foo --flag" — split for args
-                parts = srv.command.strip().split()
+                import shlex
+                parts = shlex.split(cfg.command) if cfg.command else []
                 entry["type"] = "stdio"
-                entry["command"] = parts[0] if parts else srv.command
-                if len(parts) > 1:
+                entry["command"] = parts[0] if parts else cfg.command
+                # Prefer explicit args list; fall back to command tail
+                if cfg.args:
+                    entry["args"] = cfg.args
+                elif len(parts) > 1:
                     entry["args"] = parts[1:]
-                if srv.env:
-                    entry["env"] = dict(srv.env)
+                if cfg.env:
+                    entry["env"] = cfg.env
 
-            mcp_entries[srv.name] = entry
-            self.stdout.write(f"  MCP [{srv.transport}]: {srv.name}")
+            mcp_entries[name] = entry
+            self.stdout.write(f"  MCP [{cfg.type}]: {name}")
 
         # Claude Code CLI stores project MCP config in ~/.claude.json keyed by project path.
         # On Windows, manage.py may resolve through symlinks (e.g. C:\Users\fylee\D\...)

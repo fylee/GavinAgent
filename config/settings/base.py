@@ -213,7 +213,12 @@ RAG_SIMILARITY_THRESHOLD = config("RAG_SIMILARITY_THRESHOLD", default=0.3, cast=
 # SearXNG — web search engine (used by web_search tool)
 SEARXNG_URL = config("SEARXNG_URL", default="http://localhost:8888")
 
-# MCP — Fernet encryption keys for MCPServer.env field
+# Spec 029: MCP server config file path (default: AGENT_WORKSPACE_DIR/mcp_servers.json)
+# Set to a custom absolute path if needed (e.g. /etc/gavinagent/mcp_servers.json).
+# Empty string → use default path.
+MCP_SERVERS_CONFIG_PATH: str = config("MCP_SERVERS_CONFIG_PATH", default="")
+
+# MCP — Fernet encryption keys (legacy — kept for export_mcp_to_file migration command)
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 FERNET_KEYS = [
     k for k in [

@@ -112,16 +112,6 @@ class WorkflowFactory(factory.django.DjangoModelFactory):
     filename = factory.LazyAttribute(lambda o: f"{o.name}.yml")
 
 
-class MCPServerFactory(factory.django.DjangoModelFactory):
-    class Meta:
-        model = "agent.MCPServer"
-
-    name = factory.Sequence(lambda n: f"test-mcp-server-{n}")
-    transport = "stdio"
-    command = "echo hello"
-    enabled = True
-    connection_status = "connected"
-
 
 class HeartbeatLogFactory(factory.django.DjangoModelFactory):
     class Meta:

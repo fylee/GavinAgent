@@ -39,6 +39,7 @@ async def run_stdio_connection(
     conn: _ServerConnection,
     on_ready: callable,
     on_error: callable,
+    args: list[str] | None = None,
 ) -> None:
     """Long-running coroutine that maintains a stdio MCP connection."""
     from mcp import ClientSession
@@ -50,9 +51,11 @@ async def run_stdio_connection(
     while retries < max_retries and not conn.stop.is_set():
         try:
             parts = shlex.split(command)
+            cmd = parts[0] if parts else command
+            cmd_args = args if args else (parts[1:] if len(parts) > 1 else [])
             params = StdioServerParameters(
-                command=parts[0],
-                args=parts[1:] if len(parts) > 1 else [],
+                command=cmd,
+                args=cmd_args,
                 env=env or None,
             )
             async with stdio_client(params) as (read_stream, write_stream):
