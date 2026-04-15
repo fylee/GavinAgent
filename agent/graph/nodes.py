@@ -4,11 +4,14 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 from django.conf import settings
 from django.utils import timezone
 
 from agent.graph.state import AgentState
+from agent.models import AgentRun
+from core.llm import get_completion
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +24,16 @@ def _read_workspace_file(relative: str) -> str:
     if path.exists():
         return path.read_text(encoding="utf-8")
     return ""
+
+
+def _fetch_chat_history(conversation_id: str) -> list[dict]:
+    """Return ordered chat message dicts for a conversation (patchable in tests)."""
+    from chat.models import Message as ChatMessage
+    return list(
+        ChatMessage.objects.filter(conversation_id=conversation_id)
+        .order_by("created_at")
+        .values("role", "content")
+    )
 
 
 def _count_tokens(messages: list[dict], model: str) -> int:
@@ -444,98 +457,83 @@ def _tool_sig(tool_name: str, args: dict) -> str:
     return f"{tool_name}|{_h.md5(_j.dumps(key, sort_keys=True).encode()).hexdigest()}"
 
 
-# ── nodes ──────────────────────────────────────────────────────────────────
+# ── new helpers (spec 028) ──────────────────────────────────────────────────
 
 
-def assemble_context(state: AgentState) -> dict:
-    """No-op pass-through. Context assembly is done inside call_llm."""
-    return {}
-
-
-def call_llm(state: AgentState) -> dict:
-    """Assemble context and call the LLM. Returns tool calls or final reply."""
-    from core.llm import get_completion
-    from agent.tools import all_tools
-    from agent.skills import registry as skill_registry
-
-    # Cancellation check — if the run was marked FAILED (e.g. by Cancel Run button)
-    # while the Celery task was in-flight, abort here before calling the LLM.
+def _is_cancelled(run_id: str) -> bool:
+    """Return True if the AgentRun was marked FAILED externally (Cancel button)."""
     try:
-        from agent.models import AgentRun as _AgentRun
-        _current = _AgentRun.objects.filter(pk=state["run_id"]).values_list("status", flat=True).first()
-        if _current == _AgentRun.Status.FAILED:
-            logger.info("AgentRun %s cancelled — aborting call_llm", state["run_id"])
-            return {"output": "", "pending_tool_calls": []}
+        status = AgentRun.objects.filter(pk=run_id).values_list("status", flat=True).first()
+        return status == AgentRun.Status.FAILED
     except Exception:
-        pass
+        return False
 
-    model = _get_agent_model(state)
-    system_content, triggered_skills, rag_matches, context_trace, skill_dir_map = _build_system_context(state.get("input", ""))
 
-    # Append conversation_id to system prompt so agent can reference it in workflows
-    conversation_id = state.get("conversation_id")
-    if conversation_id:
-        system_content += f"\n\n---\n\nCurrent conversation ID: `{conversation_id}`"
+_error_prefixes = (
+    "llm error:",
+    "i currently cannot",
+    "i can't execute",
+    "i can't create",
+    "i am unable",
+    "i'm unable",
+    "since i can't",
+    "currently, i'm unable",
+    "i cannot execute any further",
+    "unfortunately, i'm unable",
+    "unfortunately, i cannot",
+    "i apologize",
+)
 
-    # Build message list
+
+def _assemble_messages(
+    state: dict,
+    system_content: str,
+    model: str,
+    *,
+    filter_errors: bool = True,
+    apply_history_window: bool = True,
+    include_markdown_reminder: bool = True,
+) -> tuple[list[dict], dict]:
+    """Build the LLM message list from system prompt, history, and tool results.
+
+    Returns (messages, history_stats) where history_stats carries
+    history_messages and history_dropped for context_trace.
+    """
     messages: list[dict] = [{"role": "system", "content": system_content}]
+    history_stats = {"history_messages": 0, "history_dropped": 0}
 
     if state.get("conversation_id"):
-        from chat.models import Message as ChatMessage
-        chat_msgs = list(
-            ChatMessage.objects.filter(conversation_id=state["conversation_id"])
-            .order_by("created_at")
-            .values("role", "content")
-        )
-        # Strip assistant messages that are capability disclaimers or LLM errors —
-        # they cause the agent to re-attempt already-completed tasks on every round.
-        _error_prefixes = (
-            "llm error:",
-            "i currently cannot",
-            "i can't execute",
-            "i can't create",
-            "i am unable",
-            "i'm unable",
-            "since i can't",
-            "currently, i'm unable",
-            "i cannot execute any further",
-            "unfortunately, i'm unable",
-            "unfortunately, i cannot",
-            "i apologize",
-        )
+        raw_history = _fetch_chat_history(state["conversation_id"])
         history = [
             {"role": m["role"], "content": m["content"]}
-            for m in chat_msgs
+            for m in raw_history
             if not (
-                m["role"] == "assistant"
-                and any((m["content"] or "").lower().strip().startswith(p) for p in _error_prefixes)
+                filter_errors
+                and m["role"] == "assistant"
+                and any(
+                    (m["content"] or "").lower().strip().startswith(p)
+                    for p in _error_prefixes
+                )
             )
         ]
-        # Only keep the last AGENT_HISTORY_WINDOW turns (default 10 messages = ~5 exchanges)
-        # to prevent poisoned or irrelevant old history from confusing the agent.
-        history_window = getattr(settings, "AGENT_HISTORY_WINDOW", 10)
-        if len(history) > history_window:
-            history = history[-history_window:]
-        _history_before = len(history)
+        if apply_history_window:
+            history_window = getattr(settings, "AGENT_HISTORY_WINDOW", 10)
+            if len(history) > history_window:
+                history = history[-history_window:]
+        history_before = len(history)
         history = _truncate_history(history, settings.AGENT_CONTEXT_BUDGET_TOKENS, model)
-        context_trace["history_messages"] = len(history)
-        context_trace["history_dropped"] = _history_before - len(history)
+        history_stats["history_messages"] = len(history)
+        history_stats["history_dropped"] = history_before - len(history)
         messages.extend(history)
     else:
         messages.append({"role": "user", "content": state["input"]})
 
-    # When tool results exist, the preceding assistant message with tool_calls must
-    # appear first — otherwise the API rejects the request.
-    # Only inject when EVERY tool_call_id in the assistant message has a matching
-    # result — a partial match would cause an API error ("tool_call_ids did not have
-    # response messages").  Stale state from a prior round is silently skipped.
     tool_results = state.get("tool_results", [])
     assistant_tool_msg = state.get("assistant_tool_call_message")
     if tool_results and assistant_tool_msg:
         required_ids = {tc["id"] for tc in assistant_tool_msg.get("tool_calls", [])}
         result_ids = {tr["tool_call_id"] for tr in tool_results}
         if required_ids and required_ids.issubset(result_ids):
-            # All tool calls have results — safe to inject.
             current_results = [tr for tr in tool_results if tr["tool_call_id"] in required_ids]
             messages.append(assistant_tool_msg)
             for tr in current_results:
@@ -551,35 +549,45 @@ def call_llm(state: AgentState) -> dict:
                 required_ids - result_ids,
             )
 
-    # If tool outputs produced markdown (e.g. chart images), remind the LLM
-    # to include them verbatim and — crucially — to stop calling more tools.
-    collected_markdown = list(state.get("collected_markdown") or [])
-    if collected_markdown:
-        verbatim = "\n".join(collected_markdown)
-        if not tool_results:
-            # Concluding round (no new tool results to process)
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"Please include the following markdown verbatim in your response "
-                    f"(copy it exactly — do not describe or paraphrase it):\n\n{verbatim}"
-                ),
-            })
-        else:
-            # Tool results are present but a chart/image was already generated
-            # in a prior round — tell the LLM the task is essentially complete.
-            messages.append({
-                "role": "user",
-                "content": (
-                    "A chart or visual output has already been generated successfully. "
-                    "You can now compose your final answer using the results you already "
-                    "have. Please include the following markdown verbatim in your "
-                    f"response:\n\n{verbatim}"
-                ),
-            })
+    if include_markdown_reminder:
+        collected_markdown = list(state.get("collected_markdown") or [])
+        if collected_markdown:
+            verbatim = "\n".join(collected_markdown)
+            if not tool_results:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Please include the following markdown verbatim in your response "
+                        f"(copy it exactly — do not describe or paraphrase it):\n\n{verbatim}"
+                    ),
+                })
+            else:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "A chart or visual output has already been generated successfully. "
+                        "You can now compose your final answer using the results you already "
+                        "have. Please include the following markdown verbatim in your "
+                        f"response:\n\n{verbatim}"
+                    ),
+                })
 
-    # Build tool schemas — filtered to only tools enabled on this agent
+    return messages, history_stats
+
+
+def _build_tools_schema(
+    state: dict,
+    triggered_skills: list[str],
+    skill_dir_map: dict,
+) -> list[dict]:
+    """Build the list of LLM function schemas for this agent's enabled tools.
+
+    skill_dir_map values may be Path objects or str (serialised from state).
+    """
+    from agent.tools import all_tools
     from agent.models import Agent as AgentModel
+    import yaml as _yaml
+
     try:
         agent_obj = AgentModel.objects.get(pk=state["agent_id"])
         enabled_tools: list[str] = agent_obj.tools or []
@@ -593,16 +601,13 @@ def call_llm(state: AgentState) -> dict:
             for name, t in all_builtin.items()
             if name in enabled_tools
         ]
-        # Auto-inject tools declared as required by triggered skills but absent
-        # from the agent's enabled_tools list.
-        # Reuse skill_dir_map returned by _build_system_context (no second collect_all_skills call).
         if triggered_skills:
-            import yaml as _yaml
             auto_inject: set[str] = set()
             for skill_name in triggered_skills:
-                skill_dir = skill_dir_map.get(skill_name)
-                if skill_dir is None:
+                raw_dir = skill_dir_map.get(skill_name)
+                if raw_dir is None:
                     continue
+                skill_dir = Path(raw_dir) if isinstance(raw_dir, str) else raw_dir
                 skill_md = skill_dir / "SKILL.md"
                 if skill_md.exists():
                     try:
@@ -616,7 +621,6 @@ def call_llm(state: AgentState) -> dict:
                                         auto_inject.add(t)
                     except Exception:
                         pass
-                # run_skill is always needed when a handler exists
                 if (skill_dir / "handler.py").exists():
                     if "run_skill" not in enabled_tools:
                         auto_inject.add("run_skill")
@@ -626,29 +630,53 @@ def call_llm(state: AgentState) -> dict:
     else:
         tools_schema = []
 
-    # Note: we intentionally do NOT call skill_registry.to_llm_tools() here.
-    # Handler-based skills are invoked via the `run_skill` built-in tool, which
-    # is auto-injected when a triggered skill has a handler.py.  Exposing them
-    # as separate `skill_<name>` functions would create duplicate tool paths
-    # that confuse the LLM and lack a matching executor in execute_tools.
     try:
         from agent.mcp.registry import get_registry as get_mcp_registry
         tools_schema.extend(get_mcp_registry().to_llm_schemas())
     except Exception:
         pass
 
-    # Fetch run object for LLMUsage tracking + triggered_skills — single DB read
-    _run_obj = None
+    return tools_schema
+
+
+def _persist_loop_trace(run_id: str, loop_trace: list[dict]) -> None:
+    """Write loop_trace to AgentRun.graph_state for UI display."""
     try:
-        from agent.models import AgentRun
-        _run_obj = AgentRun.objects.get(pk=state["run_id"])
-        update_fields = {}
+        ar = AgentRun.objects.get(pk=run_id)
+        gs = ar.graph_state or {}
+        gs["loop_trace"] = loop_trace
+        AgentRun.objects.filter(pk=run_id).update(graph_state=gs)
+    except Exception:
+        pass
+
+
+def _get_run_obj(state: dict) -> Any:
+    """Fetch the AgentRun object for LLMUsage tracking; returns None on failure."""
+    try:
+        return AgentRun.objects.get(pk=state["run_id"])
+    except Exception:
+        return None
+
+
+def _persist_first_round_context(
+    state: dict,
+    history_stats: dict,
+    tools_schema: list[dict],
+    context_trace: dict,
+    rag_matches: list[dict],
+    triggered_skills: list[str],
+) -> None:
+    """Persist context trace and triggered-skill metadata on the first round only."""
+    if state.get("tool_call_rounds", 0) != 0:
+        return
+    try:
+        run_obj = AgentRun.objects.get(pk=state["run_id"])
+        update_fields: dict = {}
         if triggered_skills:
             update_fields["triggered_skills"] = triggered_skills
-        gs = _run_obj.graph_state or {}
+        gs = run_obj.graph_state or {}
         if rag_matches:
             gs["rag_matches"] = rag_matches
-        # Store names of connected MCP servers included in this call's tool list
         try:
             from agent.mcp.registry import get_registry as get_mcp_registry
             mcp_server_names = sorted({
@@ -659,42 +687,29 @@ def call_llm(state: AgentState) -> dict:
             mcp_server_names = []
         if mcp_server_names:
             gs["mcp_servers_active"] = mcp_server_names
-        # Persist context_trace on the first round only (it describes the initial context load)
-        if state.get("tool_call_rounds", 0) == 0:
-            context_trace["tools_count"] = len(tools_schema)
-            context_trace["mcp_servers"] = mcp_server_names
-            gs["context_trace"] = context_trace
+        ctx = dict(context_trace)
+        ctx["tools_count"] = len(tools_schema)
+        ctx["mcp_servers"] = mcp_server_names
+        ctx["history_messages"] = history_stats.get("history_messages", 0)
+        ctx["history_dropped"] = history_stats.get("history_dropped", 0)
+        gs["context_trace"] = ctx
         update_fields["graph_state"] = gs
-        if update_fields:
-            AgentRun.objects.filter(pk=state["run_id"]).update(**update_fields)
+        AgentRun.objects.filter(pk=state["run_id"]).update(**update_fields)
     except Exception:
         pass
 
-    try:
-        _round_start_ts = timezone.now().timestamp()
-        response = get_completion(
-            messages,
-            model=model,
-            source="agent",
-            run=_run_obj,
-            tools=tools_schema if tools_schema else None,
-        )
-    except Exception as exc:
-        logger.exception("LLM call failed in AgentRun %s: %s", state.get("run_id"), exc)
-        return {"output": f"LLM error: {exc}", "pending_tool_calls": []}
 
-    _llm_ms = round((timezone.now().timestamp() - _round_start_ts) * 1000)
-
-    choice = response.choices[0]
-    message = choice.message
-
-    # ── Loop trace: record this round's decision ──────────────────────────
+def _handle_llm_response(
+    state: dict,
+    response: Any,
+    round_start_ts: float,
+    llm_ms: int,
+) -> dict:
+    """Parse LLM response, build loop_trace entry, persist, and return node result."""
+    message = response.choices[0].message
     current_round = state.get("tool_call_rounds", 0) + 1
     loop_trace = list(state.get("loop_trace") or [])
 
-    # When tool_results were present in state (subsequent round), the LLM should
-    # have started its response with "Continue: ..." or "Answer: ...".
-    # Extract and write back to the previous round's trace entry as continue_reason.
     _content_raw = (message.content or "").strip()
     if state.get("tool_results") and loop_trace:
         if _content_raw.startswith("Continue: ") or _content_raw.startswith("Answer: "):
@@ -715,16 +730,12 @@ def call_llm(state: AgentState) -> dict:
             }
             for tc in message.tool_calls
         ]
-
-        # Strip "Reason:" prefix from reasoning content (the Continue:/Answer: prefix
-        # was already consumed above for the previous round's continue_reason).
         _reasoning = _content_raw
         if _reasoning.lower().startswith("reason:"):
             _reasoning = _reasoning[len("reason:"):].strip()
         elif _reasoning.lower().startswith("continue: ") or _reasoning.lower().startswith("answer: "):
-            # Already captured as continue_reason; strip it from reasoning
-            _after_prefix = _reasoning.split("\n", 1)
-            _reasoning = _after_prefix[1].strip() if len(_after_prefix) > 1 else ""
+            _after = _reasoning.split("\n", 1)
+            _reasoning = _after[1].strip() if len(_after) > 1 else ""
             if _reasoning.lower().startswith("reason:"):
                 _reasoning = _reasoning[len("reason:"):].strip()
 
@@ -733,30 +744,16 @@ def call_llm(state: AgentState) -> dict:
             "decision": "tool_call",
             "tools": [tc.function.name for tc in message.tool_calls],
             "reasoning": _reasoning or None,
-            # Count of parallel calls in this round — >1 means they run concurrently
             "parallel_count": len(message.tool_calls),
-            # tool_wall_ms and tool_count are filled in by execute_tools after the batch completes
             "tool_wall_ms": None,
             "tool_count": 0,
             "forced": False,
-            # ts = Unix timestamp when this round's LLM call started (before get_completion)
-            "ts": _round_start_ts,
-            # llm_ms = time the LLM took to respond for this round
-            "llm_ms": _llm_ms,
+            "ts": round_start_ts,
+            "llm_ms": llm_ms,
         }
         loop_trace.append(trace_entry)
+        _persist_loop_trace(state["run_id"], loop_trace)
 
-        # Persist loop_trace to graph_state for UI display
-        try:
-            from agent.models import AgentRun as _AR
-            _ar = _AR.objects.get(pk=state["run_id"])
-            gs = _ar.graph_state or {}
-            gs["loop_trace"] = loop_trace
-            _AR.objects.filter(pk=state["run_id"]).update(graph_state=gs)
-        except Exception:
-            pass
-
-        # Preserve the full assistant message so it can precede tool results next round.
         assistant_tool_call_message = {
             "role": "assistant",
             "content": message.content if message.content else None,
@@ -775,23 +772,19 @@ def call_llm(state: AgentState) -> dict:
         return {
             "pending_tool_calls": tool_calls,
             "assistant_tool_call_message": assistant_tool_call_message,
-            # Clear stale results from the previous round so they don't cause an
-            # ID mismatch when call_llm is invoked again after execute_tools.
             "tool_results": [],
             "loop_trace": loop_trace,
         }
 
     # Final answer — no tool calls
-    # Capture the Answer:/Continue: prefix as reasoning for this round.
-    # If this follows tool results, the continue_reason was already written to
-    # the previous round above; here we store just the prefix line itself.
     _final_reasoning: str | None = None
     if _content_raw.lower().startswith("answer: ") or _content_raw.lower().startswith("continue: "):
         _final_reasoning = _content_raw.split("\n", 1)[0]
     elif _content_raw:
-        # No structured prefix — store the first sentence (up to 120 chars)
         _first_sentence = _content_raw.split(".")[0].strip()
-        _final_reasoning = (_first_sentence[:120] + "…") if len(_first_sentence) > 120 else (_first_sentence or None)
+        _final_reasoning = (
+            (_first_sentence[:120] + "…") if len(_first_sentence) > 120 else (_first_sentence or None)
+        )
 
     trace_entry = {
         "round": current_round,
@@ -801,22 +794,122 @@ def call_llm(state: AgentState) -> dict:
         "tool_wall_ms": None,
         "tool_count": 0,
         "forced": False,
-        "ts": _round_start_ts,
-        "llm_ms": _llm_ms,
+        "ts": round_start_ts,
+        "llm_ms": llm_ms,
     }
     loop_trace.append(trace_entry)
+    _persist_loop_trace(state["run_id"], loop_trace)
 
-    # Persist loop_trace to graph_state for UI display
+    return {
+        "output": message.content or "",
+        "pending_tool_calls": [],
+        "assistant_tool_call_message": None,
+        "tool_results": [],
+        "loop_trace": loop_trace,
+    }
+
+
+def _mark_force_conclude_trace(run_id: str, current_round: int, output: str) -> None:
+    """Mark the current round's loop_trace entry as forced=True, or append one."""
     try:
-        from agent.models import AgentRun as _AR
-        _ar = _AR.objects.get(pk=state["run_id"])
-        gs = _ar.graph_state or {}
-        gs["loop_trace"] = loop_trace
-        _AR.objects.filter(pk=state["run_id"]).update(graph_state=gs)
+        run = AgentRun.objects.get(pk=run_id)
+        gs = run.graph_state or {}
+        trace = list(gs.get("loop_trace") or [])
+        if trace and trace[-1].get("round") == current_round:
+            trace[-1]["forced"] = True
+        else:
+            fc_reasoning = output.split(".")[0].strip()[:120] if output else None
+            trace.append({
+                "round": current_round,
+                "decision": "answer",
+                "tools": [],
+                "reasoning": fc_reasoning or None,
+                "tool_wall_ms": None,
+                "tool_count": 0,
+                "forced": True,
+                "ts": timezone.now().timestamp(),
+            })
+        gs["loop_trace"] = trace
+        AgentRun.objects.filter(pk=run_id).update(graph_state=gs)
     except Exception:
         pass
 
-    return {"output": message.content or "", "pending_tool_calls": [], "assistant_tool_call_message": None, "tool_results": [], "loop_trace": loop_trace}
+
+# ── nodes ──────────────────────────────────────────────────────────────────
+
+
+def assemble_context(state: AgentState) -> dict:
+    """Pre-build context that is stable across all rounds of this run."""
+    query = state.get("input", "")
+    model = _get_agent_model(state)
+    system_content, triggered_skills, rag_matches, context_trace, skill_dir_map = (
+        _build_system_context(query)
+    )
+    if state.get("conversation_id"):
+        system_content += f"\n\n---\n\nCurrent conversation ID: `{state['conversation_id']}`"
+    tools_schema = _build_tools_schema(
+        state, triggered_skills=triggered_skills, skill_dir_map=skill_dir_map
+    )
+    return {
+        "_system_content": system_content,
+        "_triggered_skills": triggered_skills,
+        "_skill_dir_map": {k: str(v) for k, v in skill_dir_map.items()},
+        "_rag_matches": rag_matches,
+        "_context_trace": context_trace,
+        "_tools_schema": tools_schema,
+        "_model": model,
+    }
+
+
+def call_llm(state: AgentState) -> dict:
+    """Read pre-built context from state and call the LLM."""
+    if _is_cancelled(state["run_id"]):
+        logger.info("AgentRun %s cancelled — aborting call_llm", state["run_id"])
+        return {"output": "", "pending_tool_calls": []}
+
+    # Read context from state (populated by assemble_context).
+    # Fall back to rebuilding if empty (e.g. tool-approval resumption with old state).
+    model = state.get("_model") or _get_agent_model(state)
+    system_content = state.get("_system_content") or ""
+    tools_schema = list(state.get("_tools_schema") or [])
+    triggered_skills = list(state.get("_triggered_skills") or [])
+    skill_dir_map = dict(state.get("_skill_dir_map") or {})
+    rag_matches = list(state.get("_rag_matches") or [])
+    context_trace = dict(state.get("_context_trace") or {})
+
+    if not system_content:
+        # Fallback: rebuild context (tool-approval resumption path)
+        system_content, triggered_skills, rag_matches, context_trace, _sdm = (
+            _build_system_context(state.get("input", ""))
+        )
+        skill_dir_map = {k: str(v) for k, v in _sdm.items()}
+        if state.get("conversation_id"):
+            system_content += f"\n\n---\n\nCurrent conversation ID: `{state['conversation_id']}`"
+        tools_schema = _build_tools_schema(
+            state, triggered_skills=triggered_skills, skill_dir_map=skill_dir_map
+        )
+
+    messages, history_stats = _assemble_messages(state, system_content, model)
+    _persist_first_round_context(
+        state, history_stats, tools_schema, context_trace, rag_matches, triggered_skills
+    )
+
+    run_obj = _get_run_obj(state)
+    try:
+        _round_start = timezone.now().timestamp()
+        response = get_completion(
+            messages,
+            model=model,
+            source="agent",
+            run=run_obj,
+            tools=tools_schema if tools_schema else None,
+        )
+    except Exception as exc:
+        logger.exception("LLM call failed in AgentRun %s: %s", state.get("run_id"), exc)
+        return {"output": f"LLM error: {exc}", "pending_tool_calls": []}
+
+    _llm_ms = round((timezone.now().timestamp() - _round_start) * 1000)
+    return _handle_llm_response(state, response, _round_start, _llm_ms)
 
 
 def check_approval(state: AgentState) -> dict:
@@ -958,17 +1051,19 @@ def execute_tools(state: AgentState) -> dict:
     """Execute all pending tool calls and collect results."""
     from agent.tools import get_tool
     from agent.tools.base import ToolTimeoutError
-    from agent.models import AgentRun, ToolExecution
+    from agent.models import ToolExecution
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Cancellation check — abort before running any tools if run was cancelled.
-    try:
-        _status = AgentRun.objects.filter(pk=state["run_id"]).values_list("status", flat=True).first()
-        if _status == AgentRun.Status.FAILED:
-            logger.info("AgentRun %s cancelled — aborting execute_tools", state["run_id"])
-            return {"tool_results": [], "pending_tool_calls": [], "tool_call_rounds": state.get("tool_call_rounds", 0) + 1, "visited_urls": list(state.get("visited_urls") or []), "failed_tool_signatures": list(state.get("failed_tool_signatures") or [])}
-    except Exception:
-        pass
+    if _is_cancelled(state["run_id"]):
+        logger.info("AgentRun %s cancelled — aborting execute_tools", state["run_id"])
+        return {
+            "tool_results": [],
+            "pending_tool_calls": [],
+            "tool_call_rounds": state.get("tool_call_rounds", 0) + 1,
+            "visited_urls": list(state.get("visited_urls") or []),
+            "failed_tool_signatures": list(state.get("failed_tool_signatures") or []),
+        }
 
     import hashlib as _hashlib
     import json as _json
@@ -1330,51 +1425,20 @@ def execute_tools(state: AgentState) -> dict:
 
 
 def force_conclude(state: AgentState) -> dict:
-    """Called when tool_call_rounds hits the limit, or when all tool calls were
-    already-completed duplicates. Ask the LLM to conclude with what it has."""
-    from core.llm import get_completion
-    from agent.models import AgentRun
+    """Ask the LLM to conclude with available results when the tool round limit is hit."""
+    model = state.get("_model") or _get_agent_model(state)
+    system_content = state.get("_system_content") or ""
+    if not system_content:
+        system_content, _, _, _, _ = _build_system_context(state.get("input", ""))
 
-    model = _get_agent_model(state)
-    system_content, _, _, _, _ = _build_system_context(state.get("input", ""))
+    messages, _ = _assemble_messages(
+        state, system_content, model,
+        filter_errors=False,
+        apply_history_window=False,
+        include_markdown_reminder=False,
+    )
 
-    # Collect any markdown-bearing results (e.g. chart images) so they are
-    # always preserved verbatim regardless of what the LLM does with them.
-    # Use collected_markdown from state (persisted by execute_tools across rounds)
-    # since tool_results at this point may only contain dedup error strings.
-    tool_results = state.get("tool_results", [])
     markdown_snippets: list[str] = list(state.get("collected_markdown") or [])
-
-    messages: list[dict] = [{"role": "system", "content": system_content}]
-    if state.get("conversation_id"):
-        from chat.models import Message as ChatMessage
-        chat_msgs = list(
-            ChatMessage.objects.filter(conversation_id=state["conversation_id"])
-            .order_by("created_at")
-            .values("role", "content")
-        )
-        history = [{"role": m["role"], "content": m["content"]} for m in chat_msgs]
-        history = _truncate_history(history, settings.AGENT_CONTEXT_BUDGET_TOKENS, model)
-        messages.extend(history)
-    else:
-        messages.append({"role": "user", "content": state["input"]})
-
-    # Inject the last round's tool exchange so the LLM knows what was accomplished.
-    assistant_tool_msg = state.get("assistant_tool_call_message")
-    if tool_results and assistant_tool_msg:
-        required_ids = {tc["id"] for tc in assistant_tool_msg.get("tool_calls", [])}
-        result_ids = {tr["tool_call_id"] for tr in tool_results}
-        if required_ids and required_ids.issubset(result_ids):
-            current_results = [tr for tr in tool_results if tr["tool_call_id"] in required_ids]
-            messages.append(assistant_tool_msg)
-            for tr in current_results:
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tr["tool_call_id"],
-                    "content": json.dumps(tr["result"]),
-                })
-
-    # Tell the LLM to include any markdown verbatim (e.g. chart image syntax).
     markdown_instruction = ""
     if markdown_snippets:
         verbatim = "\n".join(markdown_snippets)
@@ -1382,7 +1446,6 @@ def force_conclude(state: AgentState) -> dict:
             f"\n\nPlease include the following markdown verbatim in your response "
             f"(do not paraphrase or describe it — copy it exactly):\n\n{verbatim}"
         )
-
     messages.append({
         "role": "user",
         "content": (
@@ -1392,45 +1455,14 @@ def force_conclude(state: AgentState) -> dict:
         ),
     })
 
-    _run_obj = None
+    run_obj = _get_run_obj(state)
     try:
-        from agent.models import AgentRun
-        _run_obj = AgentRun.objects.get(pk=state["run_id"])
-    except Exception:
-        pass
-
-    try:
-        response = get_completion(messages, model=model, source="agent", run=_run_obj)
+        response = get_completion(messages, model=model, source="agent", run=run_obj)
         output = response.choices[0].message.content or ""
     except Exception as exc:
         output = f"Reached tool-use limit. Error generating summary: {exc}"
 
-    # Mark the current round's loop_trace entry (or append one) as forced=True
-    try:
-        from agent.models import AgentRun as _AR3
-        _ar3 = _AR3.objects.get(pk=state["run_id"])
-        _gs3 = _ar3.graph_state or {}
-        _trace3 = list(_gs3.get("loop_trace") or [])
-        _current_round = state.get("tool_call_rounds", 0) + 1
-        if _trace3 and _trace3[-1].get("round") == _current_round:
-            _trace3[-1]["forced"] = True
-        else:
-            _fc_reasoning = output.split(".")[0].strip()[:120] if output else None
-            _trace3.append({
-                "round": _current_round,
-                "decision": "answer",
-                "tools": [],
-                "reasoning": _fc_reasoning or None,
-                "tool_wall_ms": None,
-                "tool_count": 0,
-                "forced": True,
-                "ts": timezone.now().timestamp(),
-            })
-        _gs3["loop_trace"] = _trace3
-        _AR3.objects.filter(pk=state["run_id"]).update(graph_state=_gs3)
-    except Exception:
-        pass
-
+    _mark_force_conclude_trace(state["run_id"], state.get("tool_call_rounds", 0) + 1, output)
     return {"output": output, "pending_tool_calls": []}
 
 

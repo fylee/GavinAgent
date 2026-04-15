@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated, TypedDict
+from typing import Annotated, NotRequired, TypedDict
 
 
 class AgentState(TypedDict):
@@ -27,3 +27,13 @@ class AgentState(TypedDict):
     blocked_mcp_servers: list[str]  # MCP server names whose tools cannot be resolved this run
     consecutive_failed_rounds: int  # rounds where every tool call failed; resets on any success
     error: str | None
+    # Populated by assemble_context; read by call_llm on every round.
+    # Underscore prefix = internal graph fields, not agent I/O.
+    # NotRequired so runs resumed from saved graph_state (approval flow) still work.
+    _system_content: NotRequired[str]
+    _triggered_skills: NotRequired[list[str]]
+    _skill_dir_map: NotRequired[dict]        # name → str(Path); Path objects serialised for JSON state
+    _rag_matches: NotRequired[list[dict]]
+    _context_trace: NotRequired[dict]
+    _tools_schema: NotRequired[list[dict]]
+    _model: NotRequired[str]
