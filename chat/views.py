@@ -357,6 +357,7 @@ class MessageStreamView(View):
                     if run_tes or run_triggered_skills or run_mcp_servers or loop_trace:
                         msg_ctx["run_trace"] = {
                             "tool_executions": bare_tes,
+                            "all_tool_executions": run_tes,
                             "triggered_skills": run_triggered_skills,
                             "mcp_servers_active": run_mcp_servers,
                             "loop_trace": loop_trace_with_tes,
