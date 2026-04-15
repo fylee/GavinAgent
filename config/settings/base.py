@@ -155,6 +155,15 @@ AGENT_SCAN_STANDARD_SKILL_DIRS = config(
     "AGENT_SCAN_STANDARD_SKILL_DIRS", default=True, cast=bool
 )
 
+# Spec 027: LLM call resilience — retry + fallback model chain
+# Comma-separated list of models tried in order after the primary exhausts retries.
+# Example: AGENT_FALLBACK_MODELS=anthropic/claude-haiku-4-5,openai/gpt-4o-mini
+AGENT_FALLBACK_MODELS: list[str] = config(
+    "AGENT_FALLBACK_MODELS", default="", cast=_Csv()
+)
+# Maximum retry attempts per model for transient errors (429, 503, 504, timeout).
+AGENT_LLM_MAX_RETRIES: int = config("AGENT_LLM_MAX_RETRIES", default=3, cast=int)
+
 # Spec 026: Skill enable/disable control
 # Global list of skill names that are disabled on all platforms.
 # Format: comma-separated skill names. Example: "skill-creator,mcp-builder"
