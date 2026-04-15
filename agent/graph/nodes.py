@@ -10,8 +10,6 @@ from django.conf import settings
 from django.utils import timezone
 
 from agent.graph.state import AgentState
-from agent.models import AgentRun
-from core.llm import get_completion
 
 logger = logging.getLogger(__name__)
 
@@ -463,6 +461,7 @@ def _tool_sig(tool_name: str, args: dict) -> str:
 def _is_cancelled(run_id: str) -> bool:
     """Return True if the AgentRun was marked FAILED externally (Cancel button)."""
     try:
+        from agent.models import AgentRun
         status = AgentRun.objects.filter(pk=run_id).values_list("status", flat=True).first()
         return status == AgentRun.Status.FAILED
     except Exception:
@@ -642,6 +641,7 @@ def _build_tools_schema(
 def _persist_loop_trace(run_id: str, loop_trace: list[dict]) -> None:
     """Write loop_trace to AgentRun.graph_state for UI display."""
     try:
+        from agent.models import AgentRun
         ar = AgentRun.objects.get(pk=run_id)
         gs = ar.graph_state or {}
         gs["loop_trace"] = loop_trace
@@ -653,6 +653,7 @@ def _persist_loop_trace(run_id: str, loop_trace: list[dict]) -> None:
 def _get_run_obj(state: dict) -> Any:
     """Fetch the AgentRun object for LLMUsage tracking; returns None on failure."""
     try:
+        from agent.models import AgentRun
         return AgentRun.objects.get(pk=state["run_id"])
     except Exception:
         return None
@@ -670,6 +671,7 @@ def _persist_first_round_context(
     if state.get("tool_call_rounds", 0) != 0:
         return
     try:
+        from agent.models import AgentRun
         run_obj = AgentRun.objects.get(pk=state["run_id"])
         update_fields: dict = {}
         if triggered_skills:
@@ -812,6 +814,7 @@ def _handle_llm_response(
 def _mark_force_conclude_trace(run_id: str, current_round: int, output: str) -> None:
     """Mark the current round's loop_trace entry as forced=True, or append one."""
     try:
+        from agent.models import AgentRun
         run = AgentRun.objects.get(pk=run_id)
         gs = run.graph_state or {}
         trace = list(gs.get("loop_trace") or [])
@@ -863,6 +866,8 @@ def assemble_context(state: AgentState) -> dict:
 
 def call_llm(state: AgentState) -> dict:
     """Read pre-built context from state and call the LLM."""
+    from core.llm import get_completion
+
     if _is_cancelled(state["run_id"]):
         logger.info("AgentRun %s cancelled — aborting call_llm", state["run_id"])
         return {"output": "", "pending_tool_calls": []}
@@ -1051,7 +1056,7 @@ def execute_tools(state: AgentState) -> dict:
     """Execute all pending tool calls and collect results."""
     from agent.tools import get_tool
     from agent.tools.base import ToolTimeoutError
-    from agent.models import ToolExecution
+    from agent.models import AgentRun, ToolExecution
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Cancellation check — abort before running any tools if run was cancelled.
@@ -1426,6 +1431,8 @@ def execute_tools(state: AgentState) -> dict:
 
 def force_conclude(state: AgentState) -> dict:
     """Ask the LLM to conclude with available results when the tool round limit is hit."""
+    from core.llm import get_completion
+
     model = state.get("_model") or _get_agent_model(state)
     system_content = state.get("_system_content") or ""
     if not system_content:

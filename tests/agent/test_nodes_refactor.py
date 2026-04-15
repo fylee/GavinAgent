@@ -33,7 +33,7 @@ class TestIsCancelled:
         """DB query failure → does not raise, returns False."""
         from agent.graph.nodes import _is_cancelled
 
-        with patch("agent.graph.nodes.AgentRun") as mock_ar:
+        with patch("agent.models.AgentRun") as mock_ar:
             mock_ar.objects.filter.side_effect = Exception("DB down")
             assert _is_cancelled("nonexistent-id") is False
 
@@ -291,7 +291,7 @@ class TestCallLlmResumptionFallback:
         mock_response.choices[0].message.content = "Hello back"
 
         with patch("agent.graph.nodes._build_system_context") as mock_ctx, \
-             patch("agent.graph.nodes.get_completion", return_value=mock_response), \
+             patch("core.llm.get_completion", return_value=mock_response), \
              patch("agent.graph.nodes._is_cancelled", return_value=False), \
              patch("agent.graph.nodes._get_agent_model", return_value="test-model"), \
              patch("agent.graph.nodes._persist_first_round_context"), \
