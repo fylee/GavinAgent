@@ -991,23 +991,13 @@ def assemble_context(state: AgentState) -> dict:
     return result
 
 
-def call_llm(state: AgentState) -> dict:
-    """Read pre-built context from state and call the LLM (streaming)."""
-    import litellm
-    from core.llm import get_completion_stream, get_completion, _record_usage
+def _rebuild_context_if_needed(state: AgentState) -> tuple[str, list, list, dict, list]:
+    """Return (system_content, tools_schema, triggered_skills, rag_matches, skill_dir_map_strs).
 
-    if _is_cancelled(state["run_id"]):
-        logger.info("AgentRun %s cancelled — aborting call_llm", state["run_id"])
-        return {"output": "", "pending_tool_calls": []}
-
-    # @mcp tools short-circuit — return pre-formatted listing without calling LLM.
-    tool_listing = state.get("_tool_listing") or ""
-    if tool_listing:
-        return {"output": tool_listing, "pending_tool_calls": []}
-
-    # Read context from state (populated by assemble_context).
-    # Fall back to rebuilding if empty (e.g. tool-approval resumption with old state).
-    model = state.get("_model") or _get_agent_model(state)
+    Reads pre-built context from state.  Falls back to a full rebuild when
+    ``_system_content`` is absent — this happens on tool-approval resumption
+    with agent state that pre-dates the context-caching refactor.
+    """
     system_content = state.get("_system_content") or ""
     tools_schema = list(state.get("_tools_schema") or [])
     triggered_skills = list(state.get("_triggered_skills") or [])
@@ -1016,7 +1006,6 @@ def call_llm(state: AgentState) -> dict:
     context_trace = dict(state.get("_context_trace") or {})
 
     if not system_content:
-        # Fallback: rebuild context (tool-approval resumption path)
         system_content, triggered_skills, rag_matches, context_trace, _sdm = (
             _build_system_context(state.get("input", ""))
         )
@@ -1027,86 +1016,62 @@ def call_llm(state: AgentState) -> dict:
             state, triggered_skills=triggered_skills, skill_dir_map=skill_dir_map
         )
 
-    messages, history_stats = _assemble_messages(state, system_content, model)
-    _persist_first_round_context(
-        state, history_stats, tools_schema, context_trace, rag_matches, triggered_skills
-    )
+    return system_content, tools_schema, triggered_skills, rag_matches, context_trace
 
-    run_obj = _get_run_obj(state)
-    current_round = state.get("tool_call_rounds", 0) + 1
-    run_id = state["run_id"]
 
-    _round_start = timezone.now().timestamp()
-    try:
-        stream = get_completion_stream(
-            messages,
-            model=model,
-            source="agent",
-            run=run_obj,
-            tools=tools_schema if tools_schema else None,
-        )
-    except Exception as exc:
-        logger.exception("LLM stream init failed in AgentRun %s: %s", run_id, exc)
-        # Fallback to non-streaming
-        try:
-            response = get_completion(
-                messages, model=model, source="agent", run=run_obj,
-                tools=tools_schema if tools_schema else None,
-            )
-            _llm_ms = round((timezone.now().timestamp() - _round_start) * 1000)
-            return _handle_llm_response(state, response, _round_start, _llm_ms)
-        except Exception as exc2:
-            logger.exception("LLM fallback also failed in AgentRun %s: %s", run_id, exc2)
-            return {"output": f"LLM error: {exc2}", "pending_tool_calls": []}
+def _consume_stream(
+    stream: Any,
+    run_id: str,
+    current_round: int,
+) -> tuple[list, str] | None:
+    """Consume a litellm streaming response chunk by chunk.
 
-    # ── Consume stream, accumulate reasoning + tool call deltas ──────────────
+    Accumulates raw chunks and reasoning text, flushing reasoning to the DB
+    every 300 ms for live HTMX display.
+
+    Returns ``(chunks, reasoning_buf)`` on success, or ``None`` if the run
+    was cancelled mid-stream (after clearing the streaming-round state).
+    """
+    _WRITE_INTERVAL = 0.3
     reasoning_buf: str = ""
-    tool_deltas: dict[int, dict] = {}    # {index: {id, name, arguments}}
     chunks: list = []
     _last_write = time.monotonic()
-    _WRITE_INTERVAL = 0.3                # seconds between DB flushes
 
     try:
         for i, chunk in enumerate(stream):
             chunks.append(chunk)
 
-            # Check for cancellation every 10 chunks
             if i % 10 == 0 and _is_cancelled(run_id):
                 logger.info("AgentRun %s cancelled mid-stream", run_id)
                 _clear_streaming_round(run_id)
-                return {"output": "", "pending_tool_calls": []}
+                return None
 
             delta = chunk.choices[0].delta if (chunk.choices and chunk.choices[0].delta) else None
             if not delta:
                 continue
 
-            # Accumulate reasoning / thinking text
             content = delta.content
             if content:
                 if isinstance(content, list):
                     # Claude extended thinking: list of typed content blocks
                     for block in content:
-                        btype = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+                        btype = (
+                            block.get("type") if isinstance(block, dict)
+                            else getattr(block, "type", None)
+                        )
                         if btype == "thinking":
-                            reasoning_buf += block.get("thinking", "") if isinstance(block, dict) else getattr(block, "thinking", "")
+                            reasoning_buf += (
+                                block.get("thinking", "") if isinstance(block, dict)
+                                else getattr(block, "thinking", "")
+                            )
                         elif btype == "text":
-                            reasoning_buf += block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
+                            reasoning_buf += (
+                                block.get("text", "") if isinstance(block, dict)
+                                else getattr(block, "text", "")
+                            )
                 else:
                     reasoning_buf += content
 
-            # Accumulate tool call deltas
-            for tc_delta in (delta.tool_calls or []):
-                idx = tc_delta.index if hasattr(tc_delta, "index") else 0
-                if idx not in tool_deltas:
-                    tool_deltas[idx] = {"id": "", "name": "", "arguments": ""}
-                if tc_delta.id:
-                    tool_deltas[idx]["id"] += tc_delta.id
-                if tc_delta.function and tc_delta.function.name:
-                    tool_deltas[idx]["name"] += tc_delta.function.name
-                if tc_delta.function and tc_delta.function.arguments:
-                    tool_deltas[idx]["arguments"] += tc_delta.function.arguments
-
-            # Periodic flush — write accumulated reasoning to DB for live display
             now = time.monotonic()
             if reasoning_buf and now - _last_write >= _WRITE_INTERVAL:
                 _write_streaming_round(run_id, current_round, reasoning_buf)
@@ -1115,27 +1080,104 @@ def call_llm(state: AgentState) -> dict:
     except Exception as exc:
         logger.exception("LLM stream error in AgentRun %s: %s", run_id, exc)
         _clear_streaming_round(run_id)
-        return {"output": f"LLM error: {exc}", "pending_tool_calls": []}
+        raise
 
-    # ── Reconstruct full response from chunks ─────────────────────────────────
+    return chunks, reasoning_buf
+
+
+def _call_llm_streaming(
+    messages: list,
+    model: str,
+    run_obj: Any,
+    tools_schema: list,
+    run_id: str,
+    current_round: int,
+    round_start: float,
+) -> tuple[Any, int] | None:
+    """Init a streaming LLM call, consume it, and reconstruct a full response.
+
+    Falls back to a blocking call when streaming init fails.
+
+    Returns ``(response, llm_ms)`` on success, ``None`` when cancelled, or
+    raises on unrecoverable error.
+    """
+    import litellm
+    from core.llm import get_completion_stream, get_completion, _record_usage
+
+    tools_arg = tools_schema if tools_schema else None
+    try:
+        stream = get_completion_stream(
+            messages, model=model, source="agent", run=run_obj, tools=tools_arg,
+        )
+    except Exception as exc:
+        logger.exception("LLM stream init failed in AgentRun %s: %s", run_id, exc)
+        response = get_completion(
+            messages, model=model, source="agent", run=run_obj, tools=tools_arg,
+        )
+        llm_ms = round((timezone.now().timestamp() - round_start) * 1000)
+        return response, llm_ms
+
+    result = _consume_stream(stream, run_id, current_round)
+    if result is None:
+        return None  # cancelled
+
+    chunks, _ = result
     _clear_streaming_round(run_id)
-    _llm_ms = round((timezone.now().timestamp() - _round_start) * 1000)
+    llm_ms = round((timezone.now().timestamp() - round_start) * 1000)
 
     try:
         response = litellm.stream_chunk_builder(chunks, messages=messages)
     except Exception:
-        # stream_chunk_builder may fail for some providers; build minimal response
         response = chunks[-1] if chunks else None
         if response is None:
-            return {"output": "LLM error: empty stream", "pending_tool_calls": []}
+            raise RuntimeError("LLM error: empty stream")
 
-    # Record usage from reconstructed response (stream_chunk_builder includes usage)
     try:
         _record_usage(response, model, "agent", run=run_obj)
     except Exception:
         pass
 
-    return _handle_llm_response(state, response, _round_start, _llm_ms)
+    return response, llm_ms
+
+
+def call_llm(state: AgentState) -> dict:
+    """Read pre-built context from state and call the LLM (streaming)."""
+    if _is_cancelled(state["run_id"]):
+        logger.info("AgentRun %s cancelled — aborting call_llm", state["run_id"])
+        return {"output": "", "pending_tool_calls": []}
+
+    tool_listing = state.get("_tool_listing") or ""
+    if tool_listing:
+        return {"output": tool_listing, "pending_tool_calls": []}
+
+    system_content, tools_schema, triggered_skills, rag_matches, context_trace = (
+        _rebuild_context_if_needed(state)
+    )
+    model = state.get("_model") or _get_agent_model(state)
+
+    messages, history_stats = _assemble_messages(state, system_content, model)
+    _persist_first_round_context(
+        state, history_stats, tools_schema, context_trace, rag_matches, triggered_skills
+    )
+
+    run_obj = _get_run_obj(state)
+    run_id = state["run_id"]
+    current_round = state.get("tool_call_rounds", 0) + 1
+    round_start = timezone.now().timestamp()
+
+    try:
+        result = _call_llm_streaming(
+            messages, model, run_obj, tools_schema, run_id, current_round, round_start,
+        )
+    except Exception as exc:
+        logger.exception("LLM call failed in AgentRun %s: %s", run_id, exc)
+        return {"output": f"LLM error: {exc}", "pending_tool_calls": []}
+
+    if result is None:
+        return {"output": "", "pending_tool_calls": []}
+
+    response, llm_ms = result
+    return _handle_llm_response(state, response, round_start, llm_ms)
 
 
 def check_approval(state: AgentState) -> dict:
