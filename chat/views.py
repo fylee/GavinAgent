@@ -15,6 +15,41 @@ from .models import Conversation, Message
 from .tasks import process_chat_message
 
 
+def _build_usage_lists(
+    triggered_skills: list[str],
+    mcp_servers_active: list[str],
+    tool_executions,
+    mcp_registry=None,
+) -> tuple[list[dict], list[dict]]:
+    """Return skills_with_usage and mcp_with_usage sorted: used first (colored), unused last (gray).
+
+    A skill is 'used' when the 'skill' tool was explicitly called with that skill name.
+    An MCP server is 'used' when at least one of its tools was executed.
+    """
+    # Skills: used if the 'skill' built-in tool was invoked with this name
+    actually_used_skills: set[str] = set()
+    actually_used_mcp: set[str] = set()
+    for te in tool_executions:
+        if te.tool_name == "skill" and isinstance(te.input, dict):
+            sname = te.input.get("name") or te.input.get("skill_name")
+            if sname:
+                actually_used_skills.add(sname)
+        if "__" in te.tool_name and mcp_registry:
+            entry = mcp_registry.get(te.tool_name)
+            if entry:
+                actually_used_mcp.add(entry.server_name)
+
+    skills_with_usage = sorted(
+        [{"name": s, "used": s in actually_used_skills} for s in triggered_skills],
+        key=lambda x: (0 if x["used"] else 1),
+    )
+    mcp_with_usage = sorted(
+        [{"name": s, "used": s in actually_used_mcp} for s in mcp_servers_active],
+        key=lambda x: (0 if x["used"] else 1),
+    )
+    return skills_with_usage, mcp_with_usage
+
+
 class SidebarMixin:
     """Adds sidebar conversation groups and available models to context."""
 
@@ -259,6 +294,9 @@ class MessageStreamView(View):
                 else:
                     te.display_name = te.tool_name
                     te.is_mcp = False
+            skills_with_usage, mcp_with_usage = _build_usage_lists(
+                triggered_skills, mcp_servers_active, tool_executions, _mcp_reg
+            )
             # Group TEs by round so they render interleaved with loop_trace reasoning.
             # TEs with round=None (no round field yet) are distributed in created_at order
             # across rounds using a positional fallback.
@@ -295,6 +333,8 @@ class MessageStreamView(View):
                         "tool_executions": bare_tes,
                         "triggered_skills": triggered_skills,
                         "mcp_servers_active": mcp_servers_active,
+                        "skills_with_usage": skills_with_usage,
+                        "mcp_with_usage": mcp_with_usage,
                         "loop_trace": loop_trace_with_tes,
                     },
                     request=request,
@@ -354,6 +394,12 @@ class MessageStreamView(View):
                     bare_tes = run_tes if (not loop_trace and run_tes) else []
                     run_triggered_skills = completed_run.triggered_skills or []
                     run_mcp_servers = gs.get("mcp_servers_active", [])
+                    # MCP registry for usage detection
+                    try:
+                        from agent.mcp.registry import get_registry as get_mcp_registry
+                        _run_mcp_reg = get_mcp_registry()
+                    except Exception:
+                        _run_mcp_reg = None
                     # Build unique tool summary: [{name, is_mcp, count, has_error}]
                     _tool_counts: dict = {}
                     for te in run_tes:
@@ -364,6 +410,10 @@ class MessageStreamView(View):
                         if te.status == "error":
                             _tool_counts[key]["has_error"] = True
                     unique_tools = list(_tool_counts.values())
+                    # Usage-sorted skills and MCP lists
+                    skills_with_usage, mcp_with_usage = _build_usage_lists(
+                        run_triggered_skills, run_mcp_servers, run_tes, _run_mcp_reg
+                    )
                     if run_tes or run_triggered_skills or run_mcp_servers or loop_trace:
                         msg_ctx["run_trace"] = {
                             "tool_executions": bare_tes,
@@ -371,6 +421,8 @@ class MessageStreamView(View):
                             "unique_tools": unique_tools,
                             "triggered_skills": run_triggered_skills,
                             "mcp_servers_active": run_mcp_servers,
+                            "skills_with_usage": skills_with_usage,
+                            "mcp_with_usage": mcp_with_usage,
                             "loop_trace": loop_trace_with_tes,
                         }
                 except Exception:

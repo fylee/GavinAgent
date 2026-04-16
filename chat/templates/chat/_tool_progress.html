@@ -15,8 +15,20 @@
     {% endif %}
     <div class="flex-1 min-w-0 space-y-2">
 
-      {# Triggered skills #}
-      {% if triggered_skills %}
+      {# Triggered skills — used ones first (colored), unused last (gray) #}
+      {% if skills_with_usage %}
+      <div class="flex items-center gap-1.5 flex-wrap">
+        {% for skill in skills_with_usage %}
+        <span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full
+          {% if skill.used %}bg-purple-900/60 text-purple-300{% else %}bg-gray-800/40 text-gray-600{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+          {{ skill.name }}
+        </span>
+        {% endfor %}
+      </div>
+      {% elif triggered_skills %}
       <div class="flex items-center gap-1.5 flex-wrap">
         {% for skill in triggered_skills %}
         <span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-900/60 text-purple-300">
@@ -29,8 +41,20 @@
       </div>
       {% endif %}
 
-      {# Active MCP servers #}
-      {% if mcp_servers_active %}
+      {# Active MCP servers — used ones first (colored), unused last (gray) #}
+      {% if mcp_with_usage %}
+      <div class="flex items-center gap-1.5 flex-wrap">
+        {% for server in mcp_with_usage %}
+        <span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full
+          {% if server.used %}bg-teal-900/60 text-teal-300{% else %}bg-gray-800/40 text-gray-600{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+          {{ server.name }}
+        </span>
+        {% endfor %}
+      </div>
+      {% elif mcp_servers_active %}
       <div class="flex items-center gap-1.5 flex-wrap">
         {% for server in mcp_servers_active %}
         <span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-teal-900/60 text-teal-300">

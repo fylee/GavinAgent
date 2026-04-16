@@ -62,7 +62,7 @@
       </div>
       {% endif %}
       <div x-show="traceOpen" x-cloak class="mt-2">
-        {% include "chat/_tool_progress.html" with tool_executions=run_trace.tool_executions triggered_skills=run_trace.triggered_skills mcp_servers_active=run_trace.mcp_servers_active loop_trace=run_trace.loop_trace finished=True only %}
+        {% include "chat/_tool_progress.html" with tool_executions=run_trace.tool_executions triggered_skills=run_trace.triggered_skills mcp_servers_active=run_trace.mcp_servers_active skills_with_usage=run_trace.skills_with_usage mcp_with_usage=run_trace.mcp_with_usage loop_trace=run_trace.loop_trace finished=True only %}
       </div>
     </div>
     {% endif %}
