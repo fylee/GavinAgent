@@ -76,6 +76,7 @@
           <div class="flex items-start gap-1.5">
             <span class="flex-shrink-0 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center mt-0.5
               {% if entry.decision == 'tool_call' %}bg-blue-900/60 text-blue-300
+              {% elif entry.decision == 'streaming' %}bg-yellow-900/50 text-yellow-400 animate-pulse
               {% else %}bg-green-900/60 text-green-300{% endif %}">
               {{ entry.round }}
             </span>
@@ -91,7 +92,7 @@
               {% endif %}
               {% if entry.reasoning %}
               <p class="text-[11px] text-gray-200 leading-relaxed">
-                <span class="text-gray-500 select-none">💭 </span>{{ entry.reasoning|truncatewords:50 }}
+                <span class="text-gray-500 select-none">💭 </span>{% if entry.decision == 'streaming' %}{{ entry.reasoning }}{% else %}{{ entry.reasoning|truncatewords:50 }}{% endif %}{% if entry.decision == 'streaming' %}<span class="inline-block w-1 h-3 bg-gray-400 ml-0.5 animate-pulse align-middle"></span>{% endif %}
               </p>
               {% endif %}
             </div>

@@ -346,10 +346,27 @@ class MessageStreamView(View):
                  )}
                 for entry in loop_trace
             ]
+            # Append a synthetic in-progress entry if LLM is currently streaming
+            streaming_round = graph_state.get("_streaming_round")
+            if streaming_round:
+                completed_rounds = {e.get("round") for e in loop_trace_with_tes}
+                if streaming_round.get("round") not in completed_rounds:
+                    loop_trace_with_tes = loop_trace_with_tes + [{
+                        "round": streaming_round["round"],
+                        "decision": "streaming",
+                        "reasoning": streaming_round.get("reasoning") or "",
+                        "ts": streaming_round.get("ts"),
+                        "tool_executions": [],
+                        "llm_ms": None,
+                        "elapsed_s": (
+                            round(streaming_round["ts"] - active_agent_run.started_at.timestamp(), 1)
+                            if streaming_round.get("ts") and active_agent_run.started_at else None
+                        ),
+                    }]
             # If there are TEs but no loop_trace yet (first round in flight),
             # pass them raw so at least something is visible.
             bare_tes = tool_executions if (not loop_trace and tool_executions) else []
-            if tool_executions or triggered_skills or mcp_servers_active:
+            if tool_executions or triggered_skills or mcp_servers_active or loop_trace_with_tes:
                 html = render_to_string(
                     "chat/_tool_progress.html",
                     {

@@ -135,10 +135,18 @@ def get_completion(
     raise last_exc  # type: ignore[misc]
 
 
-def get_completion_stream(messages: list[dict], model: str | None = None, **kwargs):
+def get_completion_stream(
+    messages: list[dict],
+    model: str | None = None,
+    source: str = "unknown",
+    run=None,
+    conversation=None,
+    **kwargs,
+):
     """Get a streaming completion via litellm.
 
     Spec 027: tries fallback models once (no retry) on retryable errors.
+    Spec 030: accepts run/conversation/source for usage recording by caller.
     Non-retryable errors raise immediately without trying the fallback chain.
     """
     primary = model or settings.LITELLM_DEFAULT_MODEL

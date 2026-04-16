@@ -533,3 +533,69 @@ class TestAssembleContextAtMcp:
         assert ctx_kwargs.get("forced_skill") is None
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Spec 030 — Streaming helpers: _write_streaming_round / _clear_streaming_round
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestWriteStreamingRound:
+    @pytest.mark.django_db
+    def test_writes_streaming_round_to_graph_state(self):
+        """_write_streaming_round persists {round, reasoning, ts} in graph_state."""
+        from agent.graph.nodes import _write_streaming_round
+        from tests.factories import AgentRunFactory
+
+        run = AgentRunFactory(graph_state={})
+        _write_streaming_round(str(run.pk), 1, "I need to search for papers.")
+
+        run.refresh_from_db()
+        sr = run.graph_state.get("_streaming_round")
+        assert sr is not None
+        assert sr["round"] == 1
+        assert sr["reasoning"] == "I need to search for papers."
+        assert "ts" in sr
+
+    @pytest.mark.django_db
+    def test_overwrites_previous_streaming_round(self):
+        """Subsequent calls overwrite the previous snapshot."""
+        from agent.graph.nodes import _write_streaming_round
+        from tests.factories import AgentRunFactory
+
+        run = AgentRunFactory(graph_state={})
+        _write_streaming_round(str(run.pk), 1, "first")
+        _write_streaming_round(str(run.pk), 1, "first then more text")
+
+        run.refresh_from_db()
+        assert run.graph_state["_streaming_round"]["reasoning"] == "first then more text"
+
+    def test_does_not_raise_on_invalid_run_id(self):
+        """Unknown run_id is silently ignored."""
+        from agent.graph.nodes import _write_streaming_round
+        _write_streaming_round("nonexistent-id", 1, "text")  # must not raise
+
+
+class TestClearStreamingRound:
+    @pytest.mark.django_db
+    def test_removes_streaming_round_key(self):
+        """_clear_streaming_round removes _streaming_round from graph_state."""
+        from agent.graph.nodes import _clear_streaming_round
+        from tests.factories import AgentRunFactory
+
+        run = AgentRunFactory(graph_state={"_streaming_round": {"round": 1, "reasoning": "x", "ts": 1.0}})
+        _clear_streaming_round(str(run.pk))
+
+        run.refresh_from_db()
+        assert "_streaming_round" not in run.graph_state
+
+    @pytest.mark.django_db
+    def test_no_op_when_key_absent(self):
+        """Does nothing when _streaming_round is not present."""
+        from agent.graph.nodes import _clear_streaming_round
+        from tests.factories import AgentRunFactory
+
+        run = AgentRunFactory(graph_state={"loop_trace": []})
+        _clear_streaming_round(str(run.pk))
+
+        run.refresh_from_db()
+        assert "_streaming_round" not in run.graph_state
+        assert "loop_trace" in run.graph_state  # other keys untouched
+

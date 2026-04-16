@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -734,6 +735,36 @@ def _persist_loop_trace(run_id: str, loop_trace: list[dict]) -> None:
         pass
 
 
+def _write_streaming_round(run_id: str, round_num: int, reasoning: str) -> None:
+    """Flush in-progress reasoning snapshot to graph_state for live HTMX display."""
+    import time as _time
+    try:
+        from agent.models import AgentRun
+        ar = AgentRun.objects.get(pk=run_id)
+        gs = ar.graph_state or {}
+        gs["_streaming_round"] = {
+            "round": round_num,
+            "reasoning": reasoning,
+            "ts": _time.time(),
+        }
+        AgentRun.objects.filter(pk=run_id).update(graph_state=gs)
+    except Exception:
+        pass
+
+
+def _clear_streaming_round(run_id: str) -> None:
+    """Remove the transient _streaming_round key once the round is complete."""
+    try:
+        from agent.models import AgentRun
+        ar = AgentRun.objects.get(pk=run_id)
+        gs = ar.graph_state or {}
+        if "_streaming_round" in gs:
+            gs.pop("_streaming_round")
+            AgentRun.objects.filter(pk=run_id).update(graph_state=gs)
+    except Exception:
+        pass
+
+
 def _get_run_obj(state: dict) -> Any:
     """Fetch the AgentRun object for LLMUsage tracking; returns None on failure."""
     try:
@@ -961,8 +992,9 @@ def assemble_context(state: AgentState) -> dict:
 
 
 def call_llm(state: AgentState) -> dict:
-    """Read pre-built context from state and call the LLM."""
-    from core.llm import get_completion
+    """Read pre-built context from state and call the LLM (streaming)."""
+    import litellm
+    from core.llm import get_completion_stream, get_completion, _record_usage
 
     if _is_cancelled(state["run_id"]):
         logger.info("AgentRun %s cancelled — aborting call_llm", state["run_id"])
@@ -1001,9 +1033,12 @@ def call_llm(state: AgentState) -> dict:
     )
 
     run_obj = _get_run_obj(state)
+    current_round = state.get("tool_call_rounds", 0) + 1
+    run_id = state["run_id"]
+
+    _round_start = timezone.now().timestamp()
     try:
-        _round_start = timezone.now().timestamp()
-        response = get_completion(
+        stream = get_completion_stream(
             messages,
             model=model,
             source="agent",
@@ -1011,10 +1046,95 @@ def call_llm(state: AgentState) -> dict:
             tools=tools_schema if tools_schema else None,
         )
     except Exception as exc:
-        logger.exception("LLM call failed in AgentRun %s: %s", state.get("run_id"), exc)
+        logger.exception("LLM stream init failed in AgentRun %s: %s", run_id, exc)
+        # Fallback to non-streaming
+        try:
+            response = get_completion(
+                messages, model=model, source="agent", run=run_obj,
+                tools=tools_schema if tools_schema else None,
+            )
+            _llm_ms = round((timezone.now().timestamp() - _round_start) * 1000)
+            return _handle_llm_response(state, response, _round_start, _llm_ms)
+        except Exception as exc2:
+            logger.exception("LLM fallback also failed in AgentRun %s: %s", run_id, exc2)
+            return {"output": f"LLM error: {exc2}", "pending_tool_calls": []}
+
+    # ── Consume stream, accumulate reasoning + tool call deltas ──────────────
+    reasoning_buf: str = ""
+    tool_deltas: dict[int, dict] = {}    # {index: {id, name, arguments}}
+    chunks: list = []
+    _last_write = time.monotonic()
+    _WRITE_INTERVAL = 0.3                # seconds between DB flushes
+
+    try:
+        for i, chunk in enumerate(stream):
+            chunks.append(chunk)
+
+            # Check for cancellation every 10 chunks
+            if i % 10 == 0 and _is_cancelled(run_id):
+                logger.info("AgentRun %s cancelled mid-stream", run_id)
+                _clear_streaming_round(run_id)
+                return {"output": "", "pending_tool_calls": []}
+
+            delta = chunk.choices[0].delta if (chunk.choices and chunk.choices[0].delta) else None
+            if not delta:
+                continue
+
+            # Accumulate reasoning / thinking text
+            content = delta.content
+            if content:
+                if isinstance(content, list):
+                    # Claude extended thinking: list of typed content blocks
+                    for block in content:
+                        btype = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+                        if btype == "thinking":
+                            reasoning_buf += block.get("thinking", "") if isinstance(block, dict) else getattr(block, "thinking", "")
+                        elif btype == "text":
+                            reasoning_buf += block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
+                else:
+                    reasoning_buf += content
+
+            # Accumulate tool call deltas
+            for tc_delta in (delta.tool_calls or []):
+                idx = tc_delta.index if hasattr(tc_delta, "index") else 0
+                if idx not in tool_deltas:
+                    tool_deltas[idx] = {"id": "", "name": "", "arguments": ""}
+                if tc_delta.id:
+                    tool_deltas[idx]["id"] += tc_delta.id
+                if tc_delta.function and tc_delta.function.name:
+                    tool_deltas[idx]["name"] += tc_delta.function.name
+                if tc_delta.function and tc_delta.function.arguments:
+                    tool_deltas[idx]["arguments"] += tc_delta.function.arguments
+
+            # Periodic flush — write accumulated reasoning to DB for live display
+            now = time.monotonic()
+            if reasoning_buf and now - _last_write >= _WRITE_INTERVAL:
+                _write_streaming_round(run_id, current_round, reasoning_buf)
+                _last_write = now
+
+    except Exception as exc:
+        logger.exception("LLM stream error in AgentRun %s: %s", run_id, exc)
+        _clear_streaming_round(run_id)
         return {"output": f"LLM error: {exc}", "pending_tool_calls": []}
 
+    # ── Reconstruct full response from chunks ─────────────────────────────────
+    _clear_streaming_round(run_id)
     _llm_ms = round((timezone.now().timestamp() - _round_start) * 1000)
+
+    try:
+        response = litellm.stream_chunk_builder(chunks, messages=messages)
+    except Exception:
+        # stream_chunk_builder may fail for some providers; build minimal response
+        response = chunks[-1] if chunks else None
+        if response is None:
+            return {"output": "LLM error: empty stream", "pending_tool_calls": []}
+
+    # Record usage from reconstructed response (stream_chunk_builder includes usage)
+    try:
+        _record_usage(response, model, "agent", run=run_obj)
+    except Exception:
+        pass
+
     return _handle_llm_response(state, response, _round_start, _llm_ms)
 
 
@@ -1598,6 +1718,9 @@ def save_result(state: AgentState) -> dict:
     run.status = AgentRun.Status.COMPLETED
     run.finished_at = timezone.now()
     run.save(update_fields=["output", "status", "finished_at"])
+
+    # Guard: clear any leftover _streaming_round (e.g. after crash or cancellation)
+    _clear_streaming_round(state["run_id"])
 
     # For workflow runs: deliver the output via the workflow's delivery config,
     # but only for the LAST step. WorkflowRunner sets workflow_step as 0-based index.

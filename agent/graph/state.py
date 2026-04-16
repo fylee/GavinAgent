@@ -39,3 +39,4 @@ class AgentState(TypedDict):
     _model: NotRequired[str]
     _forced_mcp: NotRequired[str]       # MCP server name from @mcp directive; "" = no constraint
     _tool_listing: NotRequired[str]     # Pre-formatted tool list for @mcp tools short-circuit
+    _streaming_round: NotRequired[dict] # Transient: {round, reasoning, ts} set during LLM streaming; cleared on completion
