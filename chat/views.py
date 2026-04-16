@@ -363,6 +363,28 @@ class MessageStreamView(View):
                             if streaming_round.get("ts") and active_agent_run.started_at else None
                         ),
                     }]
+            elif loop_trace_with_tes:
+                # Detect the "preparing" gap: last round had tool calls, all its TEs
+                # are terminal (success/error/rejected), but the next streaming round
+                # hasn't started yet.  Inject a synthetic "preparing" entry so users
+                # know why the next LLM call is coming.
+                _TERMINAL = {"success", "error", "rejected"}
+                last = loop_trace_with_tes[-1]
+                if last.get("decision") == "tool_call":
+                    last_tes = last.get("tool_executions") or []
+                    all_terminal = last_tes and all(
+                        getattr(te, "status", "") in _TERMINAL for te in last_tes
+                    )
+                    if all_terminal:
+                        _n_results = len(last_tes)
+                        loop_trace_with_tes = loop_trace_with_tes + [{
+                            "round": last["round"] + 1,
+                            "decision": "preparing",
+                            "tool_result_count": _n_results,
+                            "tool_executions": [],
+                            "elapsed_s": None,
+                            "llm_ms": None,
+                        }]
             # If there are TEs but no loop_trace yet (first round in flight),
             # pass them raw so at least something is visible.
             bare_tes = tool_executions if (not loop_trace and tool_executions) else []
