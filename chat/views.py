@@ -15,6 +15,15 @@ from .models import Conversation, Message
 from .tasks import process_chat_message
 
 
+import re as _re
+_MCP_INVALID_CHARS = _re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _sanitize_mcp_name(name: str) -> str:
+    """Match the same sanitization used in MCPToolEntry.llm_function_name."""
+    return _MCP_INVALID_CHARS.sub("_", name)
+
+
 def _build_usage_lists(
     triggered_skills: list[str],
     mcp_servers_active: list[str],
@@ -25,8 +34,14 @@ def _build_usage_lists(
 
     A skill is 'used' when the 'skill' tool was explicitly called with that skill name.
     An MCP server is 'used' when at least one of its tools was executed.
+
+    MCP server matching uses prefix extraction from te.tool_name (format:
+    <sanitized_server>__<tool>) rather than the registry singleton, which is
+    only populated in the Celery worker process — not in the web server process.
     """
-    # Skills: used if the 'skill' built-in tool was invoked with this name
+    # Pre-compute sanitized → original mapping for MCP servers
+    sanitized_to_server = {_sanitize_mcp_name(s): s for s in mcp_servers_active}
+
     actually_used_skills: set[str] = set()
     actually_used_mcp: set[str] = set()
     for te in tool_executions:
@@ -34,10 +49,20 @@ def _build_usage_lists(
             sname = te.input.get("name") or te.input.get("skill_name")
             if sname:
                 actually_used_skills.add(sname)
-        if "__" in te.tool_name and mcp_registry:
-            entry = mcp_registry.get(te.tool_name)
-            if entry:
-                actually_used_mcp.add(entry.server_name)
+        if "__" in te.tool_name:
+            # Try registry first (works in Celery worker process)
+            if mcp_registry:
+                entry = mcp_registry.get(te.tool_name)
+                if entry:
+                    actually_used_mcp.add(entry.server_name)
+                    continue
+            # Fallback: derive server from sanitized prefix of tool_name
+            # e.g. "research_mcp__s2_search_papers" → prefix "research_mcp"
+            # which matches _sanitize_mcp_name("research-mcp") = "research_mcp"
+            prefix = te.tool_name.split("__", 1)[0]
+            matched = sanitized_to_server.get(prefix)
+            if matched:
+                actually_used_mcp.add(matched)
 
     skills_with_usage = sorted(
         [{"name": s, "used": s in actually_used_skills} for s in triggered_skills],
