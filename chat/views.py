@@ -377,10 +377,16 @@ class MessageStreamView(View):
                     )
                     if all_terminal:
                         _n_results = len(last_tes)
+                        _n_parallel = sum(
+                            1 for te in last_tes if getattr(te, "is_parallel_group", False)
+                        )
+                        _n_serial = _n_results - _n_parallel
                         loop_trace_with_tes = loop_trace_with_tes + [{
                             "round": last["round"] + 1,
                             "decision": "preparing",
                             "tool_result_count": _n_results,
+                            "tool_parallel_count": _n_parallel,
+                            "tool_serial_count": _n_serial,
                             "tool_executions": [],
                             "elapsed_s": None,
                             "llm_ms": None,

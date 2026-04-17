@@ -98,7 +98,15 @@
               {% endif %}
               {% if entry.decision == 'preparing' %}
               <p class="text-[11px] text-amber-500/70 leading-relaxed">
-                <span class="select-none">⟳ </span>Calling LLM with {{ entry.tool_result_count }} tool result{{ entry.tool_result_count|pluralize }}…
+                <span class="select-none">⟳ </span>Calling LLM with {{ entry.tool_result_count }} tool result{{ entry.tool_result_count|pluralize }}
+                {% if entry.tool_parallel_count and entry.tool_serial_count %}
+                  <span class="text-gray-600">({{ entry.tool_parallel_count }} parallel + {{ entry.tool_serial_count }} sequential)</span>
+                {% elif entry.tool_parallel_count %}
+                  <span class="text-gray-600">({{ entry.tool_parallel_count }} in parallel)</span>
+                {% elif entry.tool_serial_count %}
+                  <span class="text-gray-600">(sequential)</span>
+                {% endif %}
+                <span class="text-gray-600">— one shot</span>…
               </p>
               {% endif %}
             </div>
