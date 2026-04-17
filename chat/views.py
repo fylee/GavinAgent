@@ -394,6 +394,7 @@ class MessageStreamView(View):
             # If there are TEs but no loop_trace yet (first round in flight),
             # pass them raw so at least something is visible.
             bare_tes = tool_executions if (not loop_trace and tool_executions) else []
+            token_totals = graph_state.get("token_totals") or {}
             if tool_executions or triggered_skills or mcp_servers_active or loop_trace_with_tes:
                 html = render_to_string(
                     "chat/_tool_progress.html",
@@ -406,6 +407,7 @@ class MessageStreamView(View):
                         "skills_with_usage": skills_with_usage,
                         "mcp_with_usage": mcp_with_usage,
                         "loop_trace": loop_trace_with_tes,
+                        "token_totals": token_totals,
                     },
                     request=request,
                 )
@@ -494,6 +496,7 @@ class MessageStreamView(View):
                             "skills_with_usage": skills_with_usage,
                             "mcp_with_usage": mcp_with_usage,
                             "loop_trace": loop_trace_with_tes,
+                            "token_totals": gs.get("token_totals") or {},
                         }
                 except Exception:
                     pass

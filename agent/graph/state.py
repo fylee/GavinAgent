@@ -23,7 +23,9 @@ class AgentState(TypedDict):
     succeeded_tool_signatures: list[str]  # "tool_name|arg_hash" combos that already succeeded
     collected_markdown: list[str]  # markdown snippets from tool outputs (e.g. chart images), persisted across rounds
     search_result_urls: list[str]  # URLs from web_search results, used for automatic web_read fallback
-    loop_trace: list[dict]  # per-round decision log: [{round, decision, tools, reasoning}]
+    loop_trace: list[dict]  # per-round decision log: [{round, decision, tools, reasoning,
+                             #   llm_ms, tool_wall_ms, tool_count, forced, ts, elapsed_s,
+                             #   prompt_tokens, completion_tokens, cost_usd}]  ← Spec 031
     blocked_mcp_servers: list[str]  # MCP server names whose tools cannot be resolved this run
     consecutive_failed_rounds: int  # rounds where every tool call failed; resets on any success
     error: str | None

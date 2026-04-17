@@ -723,6 +723,29 @@ def _build_tools_schema(
     return tools_schema
 
 
+def _update_token_totals(run_id: str, loop_trace: list[dict]) -> None:
+    """Sum token counts across all loop_trace entries and persist to graph_state."""
+    try:
+        from agent.models import AgentRun
+        prompt = sum(e.get("prompt_tokens") or 0 for e in loop_trace)
+        completion = sum(e.get("completion_tokens") or 0 for e in loop_trace)
+        cost = sum(e.get("cost_usd") or 0.0 for e in loop_trace)
+        totals = {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": prompt + completion,
+            "cost_usd": round(cost, 6),
+        }
+        gs = (
+            AgentRun.objects.values_list("graph_state", flat=True)
+            .filter(pk=run_id).first()
+        ) or {}
+        gs["token_totals"] = totals
+        AgentRun.objects.filter(pk=run_id).update(graph_state=gs)
+    except Exception:
+        pass
+
+
 def _persist_loop_trace(run_id: str, loop_trace: list[dict]) -> None:
     """Write loop_trace to AgentRun.graph_state for UI display."""
     try:
@@ -829,6 +852,16 @@ def _handle_llm_response(
     current_round = state.get("tool_call_rounds", 0) + 1
     loop_trace = list(state.get("loop_trace") or [])
 
+    # Extract token usage from response (safe — not all providers supply this)
+    _usage = getattr(response, "usage", None)
+    _prompt_tokens: int = getattr(_usage, "prompt_tokens", 0) or 0
+    _completion_tokens: int = getattr(_usage, "completion_tokens", 0) or 0
+    try:
+        import litellm as _litellm
+        _cost_usd: float = _litellm.completion_cost(completion_response=response) or 0.0
+    except Exception:
+        _cost_usd = 0.0
+
     _content_raw = (message.content or "").strip()
     if state.get("tool_results") and loop_trace:
         if _content_raw.startswith("Continue: ") or _content_raw.startswith("Answer: "):
@@ -869,9 +902,13 @@ def _handle_llm_response(
             "forced": False,
             "ts": round_start_ts,
             "llm_ms": llm_ms,
+            "prompt_tokens": _prompt_tokens,
+            "completion_tokens": _completion_tokens,
+            "cost_usd": _cost_usd,
         }
         loop_trace.append(trace_entry)
         _persist_loop_trace(state["run_id"], loop_trace)
+        _update_token_totals(state["run_id"], loop_trace)
 
         assistant_tool_call_message = {
             "role": "assistant",
@@ -915,9 +952,13 @@ def _handle_llm_response(
         "forced": False,
         "ts": round_start_ts,
         "llm_ms": llm_ms,
+        "prompt_tokens": _prompt_tokens,
+        "completion_tokens": _completion_tokens,
+        "cost_usd": _cost_usd,
     }
     loop_trace.append(trace_entry)
     _persist_loop_trace(state["run_id"], loop_trace)
+    _update_token_totals(state["run_id"], loop_trace)
 
     return {
         "output": message.content or "",

@@ -194,3 +194,181 @@ class TestMessageStreamToolProgress:
         content = response.content.decode()
         assert "Taiwan stock market data" in content
         assert "example.com/stocks/2344" in content
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Spec 031 — Token usage in trace: view context + template rendering
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTokenUsageInTrace:
+    """Tests 6-12: view context and template rendering for token usage (Spec 031)."""
+
+    def _get(self, rf, conversation, user_msg):
+        from chat.views import MessageStreamView
+        request = rf.get("/")
+        return MessageStreamView.as_view()(
+            request, conversation_pk=str(conversation.id), pk=str(user_msg.id)
+        )
+
+    def test_view_passes_token_totals_to_template(self, rf, conversation, user_msg, agent):
+        """graph_state with token_totals → rendered HTML contains token summary."""
+        run = AgentRunFactory(
+            agent=agent,
+            conversation=conversation,
+            status=AgentRun.Status.RUNNING,
+            graph_state={
+                "loop_trace": [
+                    {
+                        "round": 1,
+                        "decision": "answer",
+                        "tools": [],
+                        "reasoning": "Done.",
+                        "ts": 0.0,
+                        "llm_ms": 500,
+                        "prompt_tokens": 300,
+                        "completion_tokens": 120,
+                        "cost_usd": 0.00042,
+                    }
+                ],
+                "token_totals": {
+                    "prompt_tokens": 300,
+                    "completion_tokens": 120,
+                    "total_tokens": 420,
+                    "cost_usd": 0.00042,
+                },
+            },
+        )
+        response = self._get(rf, conversation, user_msg)
+        content = response.content.decode()
+        assert "Run total" in content
+        assert "420" in content
+
+    def test_view_no_token_totals_no_error(self, rf, conversation, user_msg, agent):
+        """graph_state without token_totals → no KeyError, no footer row."""
+        run = AgentRunFactory(
+            agent=agent,
+            conversation=conversation,
+            status=AgentRun.Status.RUNNING,
+            graph_state={
+                "loop_trace": [
+                    {
+                        "round": 1,
+                        "decision": "answer",
+                        "tools": [],
+                        "reasoning": "Done.",
+                        "ts": 0.0,
+                        "llm_ms": 300,
+                    }
+                ],
+            },
+        )
+        response = self._get(rf, conversation, user_msg)
+        assert response.status_code == 200
+        content = response.content.decode()
+        assert "Run total" not in content
+
+    def test_per_round_token_pill_shown(self, rf, conversation, user_msg, agent):
+        """loop_trace entry with token fields → per-round ↓/↑ pill rendered."""
+        run = AgentRunFactory(
+            agent=agent,
+            conversation=conversation,
+            status=AgentRun.Status.RUNNING,
+            graph_state={
+                "loop_trace": [
+                    {
+                        "round": 1,
+                        "decision": "answer",
+                        "tools": [],
+                        "reasoning": None,
+                        "ts": 0.0,
+                        "llm_ms": 200,
+                        "prompt_tokens": 150,
+                        "completion_tokens": 60,
+                        "cost_usd": 0.0,
+                    }
+                ],
+            },
+        )
+        response = self._get(rf, conversation, user_msg)
+        content = response.content.decode()
+        assert "↓150" in content
+        assert "↑60" in content
+
+    def test_per_round_token_pill_hidden_when_absent(self, rf, conversation, user_msg, agent):
+        """loop_trace entry without token fields → no ↓/↑ pill."""
+        run = AgentRunFactory(
+            agent=agent,
+            conversation=conversation,
+            status=AgentRun.Status.RUNNING,
+            graph_state={
+                "loop_trace": [
+                    {
+                        "round": 1,
+                        "decision": "answer",
+                        "tools": [],
+                        "reasoning": None,
+                        "ts": 0.0,
+                        "llm_ms": 200,
+                    }
+                ],
+            },
+        )
+        response = self._get(rf, conversation, user_msg)
+        content = response.content.decode()
+        assert "↓" not in content
+        assert "↑" not in content
+
+    def test_cost_pill_hidden_when_zero(self, rf, conversation, user_msg, agent):
+        """cost_usd = 0.0 → $ pill absent from round and footer."""
+        run = AgentRunFactory(
+            agent=agent,
+            conversation=conversation,
+            status=AgentRun.Status.RUNNING,
+            graph_state={
+                "loop_trace": [
+                    {
+                        "round": 1,
+                        "decision": "answer",
+                        "tools": [],
+                        "reasoning": None,
+                        "ts": 0.0,
+                        "llm_ms": 100,
+                        "prompt_tokens": 50,
+                        "completion_tokens": 20,
+                        "cost_usd": 0.0,
+                    }
+                ],
+                "token_totals": {
+                    "prompt_tokens": 50,
+                    "completion_tokens": 20,
+                    "total_tokens": 70,
+                    "cost_usd": 0.0,
+                },
+            },
+        )
+        response = self._get(rf, conversation, user_msg)
+        content = response.content.decode()
+        assert "$" not in content
+
+    def test_streaming_entry_no_tokens_no_error(self, rf, conversation, user_msg, agent):
+        """Spec 030 synthetic streaming entry has no token fields — no pill, no crash."""
+        run = AgentRunFactory(
+            agent=agent,
+            conversation=conversation,
+            status=AgentRun.Status.RUNNING,
+            graph_state={
+                "loop_trace": [],
+                "_streaming_round": {
+                    "round": 1,
+                    "reasoning": "Thinking about the query...",
+                    "ts": 0.0,
+                },
+            },
+        )
+        response = self._get(rf, conversation, user_msg)
+        assert response.status_code == 200
+        content = response.content.decode()
+        assert "Thinking about the query" in content
+        assert "↓" not in content
+        assert "↑" not in content
+

@@ -88,6 +88,12 @@
               {% if entry.llm_ms %}
               <span class="text-[10px] text-indigo-400/60">🧠 {{ entry.llm_ms }}ms</span>
               {% endif %}
+              {% if entry.prompt_tokens or entry.completion_tokens %}
+              <span class="text-[10px] text-emerald-500/70 tabular-nums">↓{{ entry.prompt_tokens }} ↑{{ entry.completion_tokens }}</span>
+              {% endif %}
+              {% if entry.cost_usd %}
+              <span class="text-[10px] text-amber-500/60 tabular-nums">${{ entry.cost_usd|floatformat:5 }}</span>
+              {% endif %}
               {% if entry.parallel_count and entry.parallel_count > 1 %}
               <span class="text-[10px] text-violet-400/80 font-medium">⇉ {{ entry.parallel_count }} tools in parallel</span>
               {% endif %}
@@ -206,6 +212,17 @@
           {% endif %}
         </div>
         {% endfor %}
+        {# Run-total token footer #}
+        {% if token_totals %}
+        <div class="flex items-center gap-3 pt-1.5 mt-1.5 border-t border-gray-700/40 text-[10px] text-gray-500 tabular-nums">
+          <span class="font-semibold text-gray-400">Run total</span>
+          <span>↓{{ token_totals.prompt_tokens }} ↑{{ token_totals.completion_tokens }}</span>
+          <span class="text-gray-600">{{ token_totals.total_tokens }} tokens</span>
+          {% if token_totals.cost_usd %}
+          <span class="text-amber-500/70">${{ token_totals.cost_usd|floatformat:5 }}</span>
+          {% endif %}
+        </div>
+        {% endif %}
       </div>
       {% endif %}
 

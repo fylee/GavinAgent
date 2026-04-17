@@ -599,3 +599,146 @@ class TestClearStreamingRound:
         assert "_streaming_round" not in run.graph_state
         assert "loop_trace" in run.graph_state  # other keys untouched
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Spec 031 — Token usage in trace: _handle_llm_response + _update_token_totals
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_response(content=None, tool_calls=None, prompt_tokens=100, completion_tokens=50):
+    """Build a minimal mock LLM response with usage."""
+    usage = MagicMock()
+    usage.prompt_tokens = prompt_tokens
+    usage.completion_tokens = completion_tokens
+    msg = MagicMock()
+    msg.content = content or ""
+    msg.tool_calls = tool_calls or []
+    choice = MagicMock()
+    choice.message = msg
+    resp = MagicMock()
+    resp.choices = [choice]
+    resp.usage = usage
+    return resp
+
+
+def _base_state_031(**kwargs):
+    return {
+        "run_id": "run-031",
+        "tool_call_rounds": 0,
+        "tool_results": [],
+        "loop_trace": [],
+        **kwargs,
+    }
+
+
+class TestHandleLlmResponseTokenFields:
+    """Tests 1-2: token fields in trace_entry (Spec 031)."""
+
+    def test_trace_entry_includes_token_fields(self):
+        """Mock response.usage with known counts → trace_entry contains tokens."""
+        from agent.graph.nodes import _handle_llm_response
+
+        resp = _make_response(content="The answer is 42.", prompt_tokens=200, completion_tokens=80)
+        state = _base_state_031()
+
+        with patch("agent.graph.nodes._persist_loop_trace"), \
+             patch("agent.graph.nodes._update_token_totals"), \
+             patch("litellm.completion_cost", return_value=0.00042):
+            result = _handle_llm_response(state, resp, 0.0, 1234)
+
+        entry = result["loop_trace"][-1]
+        assert entry["prompt_tokens"] == 200
+        assert entry["completion_tokens"] == 80
+        assert abs(entry["cost_usd"] - 0.00042) < 1e-9
+
+    def test_trace_entry_zero_tokens_when_no_usage(self):
+        """response.usage = None → fields default to 0 without raising."""
+        from agent.graph.nodes import _handle_llm_response
+
+        resp = _make_response(content="Done.")
+        resp.usage = None
+        state = _base_state_031()
+
+        with patch("agent.graph.nodes._persist_loop_trace"), \
+             patch("agent.graph.nodes._update_token_totals"), \
+             patch("litellm.completion_cost", side_effect=Exception("no usage")):
+            result = _handle_llm_response(state, resp, 0.0, 500)
+
+        entry = result["loop_trace"][-1]
+        assert entry["prompt_tokens"] == 0
+        assert entry["completion_tokens"] == 0
+        assert entry["cost_usd"] == 0.0
+
+    def test_tool_call_trace_entry_includes_token_fields(self):
+        """tool_call branch also carries token fields."""
+        from agent.graph.nodes import _handle_llm_response
+
+        tc = MagicMock()
+        tc.id = "call-1"
+        tc.function.name = "web_search"
+        tc.function.arguments = '{"query": "test"}'
+        resp = _make_response(content="Reason: search needed.", tool_calls=[tc],
+                              prompt_tokens=150, completion_tokens=30)
+        state = _base_state_031()
+
+        with patch("agent.graph.nodes._persist_loop_trace"), \
+             patch("agent.graph.nodes._update_token_totals"), \
+             patch("litellm.completion_cost", return_value=0.00015):
+            result = _handle_llm_response(state, resp, 0.0, 800)
+
+        entry = result["loop_trace"][-1]
+        assert entry["decision"] == "tool_call"
+        assert entry["prompt_tokens"] == 150
+        assert entry["completion_tokens"] == 30
+
+
+class TestUpdateTokenTotals:
+    """Tests 3-5: _update_token_totals helper (Spec 031)."""
+
+    @pytest.mark.django_db
+    def test_sums_correctly(self):
+        """Two loop_trace entries → token_totals sums match."""
+        from agent.graph.nodes import _update_token_totals
+        from tests.factories import AgentRunFactory
+
+        run = AgentRunFactory(graph_state={"loop_trace": []})
+        trace = [
+            {"round": 1, "prompt_tokens": 100, "completion_tokens": 50, "cost_usd": 0.0001},
+            {"round": 2, "prompt_tokens": 200, "completion_tokens": 80, "cost_usd": 0.0002},
+        ]
+        _update_token_totals(str(run.pk), trace)
+
+        run.refresh_from_db()
+        totals = run.graph_state.get("token_totals", {})
+        assert totals["prompt_tokens"] == 300
+        assert totals["completion_tokens"] == 130
+        assert totals["total_tokens"] == 430
+        assert abs(totals["cost_usd"] - 0.0003) < 1e-9
+
+    @pytest.mark.django_db
+    def test_overwrites_previous(self):
+        """Second call overwrites, not appends."""
+        from agent.graph.nodes import _update_token_totals
+        from tests.factories import AgentRunFactory
+
+        run = AgentRunFactory(graph_state={"token_totals": {"prompt_tokens": 999}})
+        trace = [{"round": 1, "prompt_tokens": 10, "completion_tokens": 5, "cost_usd": 0.0}]
+        _update_token_totals(str(run.pk), trace)
+
+        run.refresh_from_db()
+        assert run.graph_state["token_totals"]["prompt_tokens"] == 10
+
+    @pytest.mark.django_db
+    def test_noop_on_empty_trace(self):
+        """Empty loop_trace → all zeros, no exception."""
+        from agent.graph.nodes import _update_token_totals
+        from tests.factories import AgentRunFactory
+
+        run = AgentRunFactory(graph_state={})
+        _update_token_totals(str(run.pk), [])
+
+        run.refresh_from_db()
+        totals = run.graph_state.get("token_totals", {})
+        assert totals["prompt_tokens"] == 0
+        assert totals["completion_tokens"] == 0
+        assert totals["total_tokens"] == 0
+
