@@ -458,13 +458,39 @@ function chatInput(cancelUrl, skillsUrl, mcpUrl) {
     });
   }
 
-  (function() {
+  (function () {
     var renderer = new marked.Renderer();
-    renderer.image = function(href, title, text) {
+
+    // ── Image: keep existing behaviour ──
+    renderer.image = function (href, title, text) {
       var titleAttr = title ? ' title="' + title + '"' : '';
       return '<img src="' + (href || '') + '" alt="' + (text || '') + '"' + titleAttr + '>';
     };
-    marked.setOptions({ renderer: renderer, breaks: true, gfm: true });
+
+    // ── Code block: highlight + wrapper with language badge and copy button ──
+    renderer.code = function (code, lang) {
+      var token = (typeof code === 'object' && code !== null) ? code : null;
+      var codeText = token ? (token.text || '') : (code || '');
+      var langHint = token ? (token.lang || '') : (lang || '');
+      var validLang = langHint && hljs.getLanguage(langHint) ? langHint : null;
+      var highlighted = validLang
+        ? hljs.highlight(codeText, { language: validLang }).value
+        : hljs.highlightAuto(codeText).value;
+      var displayLang = validLang || 'code';
+      return (
+        '<div class="code-block-wrapper">' +
+          '<div class="code-block-header">' +
+            '<span class="code-lang-badge">' + displayLang + '</span>' +
+            '<button class="copy-btn" data-copy>Copy</button>' +
+          '</div>' +
+          '<pre><code class="hljs' + (validLang ? ' language-' + validLang : '') + '">' +
+            highlighted +
+          '</code></pre>' +
+        '</div>'
+      );
+    };
+
+    marked.use({ renderer: renderer, breaks: true, gfm: true });
   })();
 
   function renderMarkdown() {
@@ -473,20 +499,41 @@ function chatInput(cancelUrl, skillsUrl, mcpUrl) {
       var src;
       if (srcId) {
         var scriptEl = document.getElementById(srcId);
-        src = scriptEl ? JSON.parse(scriptEl.textContent) : el.textContent;
+        src = scriptEl ? JSON.parse(scriptEl.textContent) : '';
       } else {
         src = el.textContent;
       }
-      el.innerHTML = marked.parse(src);
-      el.dataset.rendered = '1';
-      // Apply syntax highlighting to any code blocks
-      el.querySelectorAll('pre code').forEach(function(block) {
-        hljs.highlightElement(block);
+      if (!src) return;
+      var raw = marked.parse(src);
+      el.innerHTML = DOMPurify.sanitize(raw, {
+        ADD_TAGS: ['pre', 'code'],
+        ADD_ATTR: ['class', 'data-copy'],
       });
+      el.dataset.rendered = '1';
     });
   }
   document.addEventListener('htmx:afterSwap', renderMarkdown);
   renderMarkdown();
+
+  // Copy button — delegated listener works for all present and future code blocks
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.copy-btn[data-copy]');
+    if (!btn) return;
+    var wrapper = btn.closest('.code-block-wrapper');
+    if (!wrapper) return;
+    var text = wrapper.querySelector('code').innerText;
+    navigator.clipboard.writeText(text).then(function () {
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(function () {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 2000);
+    }).catch(function () {
+      btn.textContent = 'Failed';
+      setTimeout(function () { btn.textContent = 'Copy'; }, 2000);
+    });
+  });
 })();
 </script>
 {% endblock %}

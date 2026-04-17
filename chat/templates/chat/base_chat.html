@@ -7,9 +7,10 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <style>
     [x-cloak] { display: none !important; }
 
@@ -58,6 +59,48 @@
     .md-content pre code {
       background: none; border: none; padding: 0;
       font-size: 0.82rem; color: inherit;
+    }
+
+    /* Code block chrome (code renderer injects .code-block-wrapper) */
+    .code-block-wrapper {
+      position: relative;
+      margin: 0.75rem 0;
+      border-radius: 0.6rem;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .code-block-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background-color: #2a2b2e;
+      padding: 0.3rem 0.75rem 0.3rem 1rem;
+      user-select: none;
+    }
+    .code-lang-badge {
+      font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
+      font-size: 0.7rem;
+      color: #6b7280;
+      letter-spacing: 0.03em;
+    }
+    .copy-btn {
+      font-size: 0.7rem;
+      color: #9ca3af;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.15rem 0.5rem;
+      border-radius: 0.25rem;
+      transition: color 0.15s, background-color 0.15s;
+      line-height: 1.4;
+    }
+    .copy-btn:hover { color: #f3f4f6; background-color: rgba(255, 255, 255, 0.07); }
+    .copy-btn.copied { color: #4ade80; }
+    /* Remove double-border from pre inside wrapper */
+    .md-content .code-block-wrapper pre {
+      margin: 0;
+      border: none;
+      border-radius: 0;
     }
 
     .md-content blockquote {
