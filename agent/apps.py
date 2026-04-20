@@ -29,37 +29,51 @@ class AgentConfig(AppConfig):
         from agent.skills.loader import SkillLoader
         from agent.skills import registry
 
+        all_loaded: list[str] = []
+        last_src = None
         try:
             sources = all_skill_dirs(check_db_trust=False)
-            all_loaded: list[str] = []
             for src in sources:
                 loader = SkillLoader(src.path)
                 loaded = loader.load_all(registry)
                 all_loaded.extend(loaded)
+                last_src = src
+        except Exception:
+            pass
 
-            # Sync loaded skills to DB (create missing rows, don't overwrite enabled flag)
+        # Sync loaded skills to DB after migrations are complete.
+        # Using post_migrate avoids RuntimeWarning from DB access in ready().
+        from django.db.models.signals import post_migrate
+
+        def _sync_skills_to_db(sender, **kwargs):
             from agent.models import Skill
             for name in all_loaded:
                 entry = registry.get(name)
-                if entry:
-                    Skill.objects.get_or_create(
-                        name=name,
-                        defaults={
-                            "description": entry.description,
-                            "path": entry.path,
-                            "source_dir": str(src.path),
-                            "enabled": True,
-                        },
-                    )
-        except Exception:
-            pass
+                if entry and last_src:
+                    try:
+                        Skill.objects.get_or_create(
+                            name=name,
+                            defaults={
+                                "description": entry.description,
+                                "path": entry.path,
+                                "source_dir": str(last_src.path),
+                                "enabled": True,
+                            },
+                        )
+                    except Exception:
+                        pass
 
-        # Load workflows from workspace/workflows/
-        try:
-            from agent.workflows.loader import WorkflowLoader
-            WorkflowLoader().load_all()
-        except Exception:
-            pass
+        post_migrate.connect(_sync_skills_to_db, weak=False)
+
+        # Load workflows after migrations are complete (accesses DB).
+        def _load_workflows(sender, **kwargs):
+            try:
+                from agent.workflows.loader import WorkflowLoader
+                WorkflowLoader().load_all()
+            except Exception:
+                pass
+
+        post_migrate.connect(_load_workflows, weak=False)
 
         # Embed skills for semantic routing (run in a thread — DB must be ready).
         # Spec 023: native_only=True at startup to avoid latency from large external
