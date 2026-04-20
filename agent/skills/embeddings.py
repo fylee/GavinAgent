@@ -117,7 +117,11 @@ def _embed_skill_dir(skill_dir: Path) -> str | None:
         return name
 
     except Exception as exc:
-        logger.warning("Failed to embed skill %s: %s", skill_dir.name, exc)
+        from django.db.utils import OperationalError, ProgrammingError
+        if isinstance(exc, (ProgrammingError, OperationalError)):
+            logger.debug("Skipping embed for %s (DB not ready): %s", skill_dir.name, exc)
+        else:
+            logger.warning("Failed to embed skill %s: %s", skill_dir.name, exc)
         return None
 
 
